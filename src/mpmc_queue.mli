@@ -10,5 +10,5 @@
 type 'a t
 
 val init : num_domain:int -> 'a t
-val enq : 'a t -> 'a -> unit
-val deq : 'a t -> 'a option
+val push : 'a t -> 'a -> unit
+val pop : 'a t -> 'a option

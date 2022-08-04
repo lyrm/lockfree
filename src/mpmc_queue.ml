@@ -79,6 +79,10 @@ and 'a op_desc = {
 (* Domain id to array index *)
 and id_tbl = { init : int Atomic.t; tbl : (Domain.id, int) Hashtbl.t }
 
+(* Utiliser un truc thread safe (Atomic de map)
+   ou
+   solution avec un writer
+*)
 let ind_of_id { tid_tbl; _ } id =
   match Hashtbl.find_opt tid_tbl.tbl id with
   | None ->
@@ -102,10 +106,11 @@ let init_op_desc phase pending enqueue node = { phase; pending; enqueue; node }
 let empty_node v = init_node v (-1)
 
 let init ~num_domain =
+  let sentinel = empty_node None in
   {
-    head = Atomic.make (empty_node None);
+    head = Atomic.make sentinel;
     (* None ? *)
-    tail = Atomic.make (empty_node None);
+    tail = Atomic.make sentinel;
     (* None ? *)
     state =
       Array.init num_domain (fun _ ->
@@ -256,9 +261,9 @@ and help_deq t ind phase =
       else
         (* queue is not empty *)
         let curDesc = Atomic.get t.state.(ind) in
-        let node = curDesc.node |> Option.get in
+        let node = curDesc.node in
         if is_still_pending t ind phase then
-          if first = Atomic.get t.head && node <> first then
+          if first = Atomic.get t.head && node <> Some first then
             let newDesc =
               init_op_desc (Atomic.get t.state.(ind)).phase true false
                 (Some first)
@@ -293,4 +298,7 @@ and help_finish_deq t =
           in
           Atomic.compare_and_set t.state.(ind) curDesc newDesc |> ignore;
           Atomic.compare_and_set t.head first next |> ignore
-      | None -> ()
+      | None -> print_endline "none"
+
+let push = enq
+let pop = deq
