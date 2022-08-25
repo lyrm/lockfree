@@ -11,7 +11,7 @@ type 'a t = {
   head : 'a node Atomic.t;
   tail : 'a node Atomic.t;
   state : 'a op_desc Atomic.t Array.t;
-  tid_tbl : id_tbl;
+  register : int Atomic.t;
 }
 (** Type representing the queue as a singly-linked list :
 
@@ -34,8 +34,8 @@ type 'a t = {
 and 'a node = {
   value : 'a option;
   next : 'a node option Atomic.t;
-  enq_ind : int;
-  deq_ind : int Atomic.t;
+  enq_tid : int;
+  deq_tid : int Atomic.t;
 }
 (** Holds one element of the queue.
 
@@ -44,12 +44,12 @@ and 'a node = {
    - [next] is the next node in the queue ([node.next] is popped
    [next] or say otherwise has been pushed after)
 
-   - [enq_ind] is the identifier of this node's enqueuer
+   - [enq_tid] is the identifier of this node's enqueuer
 
-   - [deq_ind] is the identifier of this node's dequeuer. Having a
+   - [deq_tid] is the identifier of this node's dequeuer. Having a
    value > -1 means this node is being popped.
 
-   [enq_ind] and [deq_ind] are not directly domain identifier but are
+   [enq_tid] and [deq_tid] are not directly domain identifier but are
    linked to it by [tid_tbl]. They are used to identify and help the
    identified domain if it is still working on the corresponding
    operation.
@@ -76,31 +76,8 @@ and 'a op_desc = {
     - [node] : is used to store either the node to enqueue or the node
    to dequeue (i.e. the head node).  *)
 
-(* Domain id to array index *)
-and id_tbl = { init : int Atomic.t; tbl : (Domain.id, int) Hashtbl.t }
-
-(* Utiliser un truc thread safe (Atomic de map)
-   ou
-   solution avec un writer
-*)
-let ind_of_id { tid_tbl; _ } id =
-  match Hashtbl.find_opt tid_tbl.tbl id with
-  | None ->
-      (* is it wait free because each domain will pass in this branch only once ? *)
-      let rec loop () =
-        let ind = Atomic.get tid_tbl.init in
-        if Atomic.compare_and_set tid_tbl.init ind (ind + 1) then (
-          Hashtbl.add tid_tbl.tbl id ind;
-          ind)
-        else (
-          Domain.cpu_relax ();
-          loop ())
-      in
-      loop ()
-  | Some ind -> ind
-
 let init_node value etid : 'a node =
-  { value; next = Atomic.make None; enq_ind = etid; deq_ind = Atomic.make (-1) }
+  { value; next = Atomic.make None; enq_tid = etid; deq_tid = Atomic.make (-1) }
 
 let init_op_desc phase pending enqueue node = { phase; pending; enqueue; node }
 let empty_node v = init_node v (-1)
@@ -115,8 +92,19 @@ let init ~num_domain =
     state =
       Array.init num_domain (fun _ ->
           Atomic.make @@ init_op_desc (-1) false true None);
-    tid_tbl = { init = Atomic.make 0; tbl = Hashtbl.create num_domain };
+    register = Atomic.make 0;
   }
+
+type 'a wt = Domain.id * int * 'a t
+
+exception Too_Many_Registered_Domains
+
+let rec register t : 'a wt =
+  let tid = Atomic.get t.register in
+  if tid >= Array.length t.state then raise Too_Many_Registered_Domains;
+  if Atomic.compare_and_set t.register tid (tid + 1) then
+    (Domain.self (), tid, t)
+  else register t
 
 let max_phase t =
   Array.fold_left
@@ -128,12 +116,14 @@ let max_phase t =
      done;
    !max*)
 
-let is_still_pending t ind phase =
-  (Atomic.get t.state.(ind)).pending
-  && (Atomic.get t.state.(ind)).phase <= phase
+let is_still_pending t tid phase =
+  (Atomic.get t.state.(tid)).pending
+  && (Atomic.get t.state.(tid)).phase <= phase
 
-let rec enq t value =
-  let ind = ind_of_id t (Domain.self ()) in
+exception Not_queue_owner
+
+let rec enq ((tid, ind, t) : 'a wt) value =
+  if Domain.self () <> tid then raise Not_queue_owner;
   let phase = max_phase t + 1 in
   (* it may seem that evey case of the state array is accessed only by
      the [ind] domain but it is not the case ! An other may come to help. *)
@@ -142,9 +132,9 @@ let rec enq t value =
   help t phase;
   help_finish_enq t
 
-and deq t =
+and deq ((tid, ind, t) : 'a wt) =
+  if Domain.self () <> tid then raise Not_queue_owner;
   let phase = max_phase t + 1 in
-  let ind = ind_of_id t (Domain.self ()) in
   Atomic.set t.state.(ind) @@ init_op_desc phase true false None;
   help t phase;
   help_finish_deq t;
@@ -189,19 +179,19 @@ and help_finish_enq t =
   match nextopt with
   | Some next ->
       (* working domain can be or not be the enqueuer *)
-      let next_enq_ind = next.enq_ind in
-      let curDesc = Atomic.get t.state.(next_enq_ind) in
+      let next_enq_tid = next.enq_tid in
+      let curDesc = Atomic.get t.state.(next_enq_tid) in
       (* making sure no one has already done the job *)
       if
         last = Atomic.get t.tail
-        && (Atomic.get t.state.(next_enq_ind)).node = nextopt
+        && (Atomic.get t.state.(next_enq_tid)).node = nextopt
       then (
         let newDesc =
-          init_op_desc (Atomic.get t.state.(next_enq_ind)).phase false true
+          init_op_desc (Atomic.get t.state.(next_enq_tid)).phase false true
             nextopt
         in
         (* The current thread changes a box in [t.state] that may not be its own *)
-        ignore (Atomic.compare_and_set t.state.(next_enq_ind) curDesc newDesc);
+        ignore (Atomic.compare_and_set t.state.(next_enq_tid) curDesc newDesc);
         ignore (Atomic.compare_and_set t.tail last next))
   | None -> () (* another domain already finished the enqueue *)
 
@@ -239,12 +229,12 @@ and help_deq t ind phase =
                 (Some first)
             in
             if Atomic.compare_and_set t.state.(ind) curDesc newDesc then (
-              Atomic.compare_and_set first.deq_ind (-1) ind |> ignore;
+              Atomic.compare_and_set first.deq_tid (-1) ind |> ignore;
               help_finish_deq t;
               help_deq t ind phase)
             else help_deq t ind phase
           else (
-            Atomic.compare_and_set first.deq_ind (-1) ind |> ignore;
+            Atomic.compare_and_set first.deq_tid (-1) ind |> ignore;
             help_finish_deq t;
             help_deq t ind phase)
         else
@@ -256,7 +246,7 @@ and help_deq t ind phase =
 and help_finish_deq t =
   let first = Atomic.get t.head in
   let next = Atomic.get first.next in
-  let ind = Atomic.get first.deq_ind in
+  let ind = Atomic.get first.deq_tid in
   if ind <> -1 then
     let curDesc = Atomic.get t.state.(ind) in
     if first = Atomic.get t.head then

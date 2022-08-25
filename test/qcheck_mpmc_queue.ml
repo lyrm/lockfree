@@ -1,18 +1,17 @@
 module Mpmc_queue = Lockfree.Mpmc_queue
 
 (* Sequential building of a queue *)
-let queue_of_list l =
-  let queue = Mpmc_queue.init ~num_domain:4 in
-  List.iter (Mpmc_queue.push queue) l;
-  queue
+let push_list wq l =
+  List.iter (Mpmc_queue.push wq) l
+
 
 (* [extract_n_from_d q f n] extract [n] elements of [q] by calling [n]
    times the function [f] on [q]. *)
-let pop_n q n =
+let pop_n wq n =
   let rec loop acc = function
     | 0 -> acc
     | n ->
-        let a = Mpmc_queue.pop q in
+        let a = Mpmc_queue.pop wq in
         Domain.cpu_relax ();
         loop (a :: acc) (n - 1)
   in
@@ -49,21 +48,22 @@ let tests_sequential =
       Test.make ~name:"push_and_pop"
         (pair (list int) int)
         (fun i ->
-          let queue = Mpmc_queue.init ~num_domain:1 in
+          let q = Mpmc_queue.init ~num_domain:1 in
+          let wq = Mpmc_queue.register q in
 
           (* Testing property *)
-          Mpmc_queue.push queue i;
-          Mpmc_queue.pop queue = Some i);
+          Mpmc_queue.push wq i;
+          Mpmc_queue.pop wq = Some i);
       (* TEST 2 - sequential:
           [pop] on an empty queue returns None *)
       Test.make ~name:"pop_empty" (list int) (fun lpush ->
-          (* Building a random queue *)
-          let q = queue_of_list lpush in
-          (* Popping until [is_empty q] is true*)
-          let _ = pop_n q (List.length lpush) in
+          let q = Mpmc_queue.init ~num_domain:1 in
+          let wq = Mpmc_queue.register q in
+          push_list wq lpush;
+          let _ = pop_n wq (List.length lpush) in
 
           (* Testing property *)
-          match Mpmc_queue.pop q with Some _ -> false | None -> true);
+          match Mpmc_queue.pop wq with Some _ -> false | None -> true);
       (* TEST 3 - sequential :
          forall l, l' and with q built by pushing in order (l@l')
                   pop q :: pop q :: pop q :: ... :: [] = List.rev l' *)
@@ -71,9 +71,11 @@ let tests_sequential =
         (pair (list int) (list int))
         (fun (l, l') ->
           assume (l' <> []);
-          let queue = queue_of_list (l @ l') in
+          let q = Mpmc_queue.init ~num_domain:1 in
+          let wq = Mpmc_queue.register q in
+          push_list wq (l @ l');
 
-          let pop_list = pop_n queue (List.length l) in
+          let pop_list = pop_n wq (List.length l) in
           List.map Option.get pop_list = l);
       (* TEST 4 - sequential :
          forall q of size n, forall m > n, poping m times returns (m-n) None. *)
@@ -83,9 +85,10 @@ let tests_sequential =
           assume (m > 0);
           let n = List.length l in
           let m = m + n in
-          let queue = queue_of_list l in
-
-          let popped = pop_n queue m in
+          let q = Mpmc_queue.init ~num_domain:1 in
+          let wq = Mpmc_queue.register q in
+          push_list wq l;
+          let popped = pop_n wq m in
           let none_count =
             List.filter (function None -> true | _ -> false) popped
             |> List.length
@@ -118,8 +121,11 @@ let tests_two_domains =
         (pair (list int) (pair small_nat small_nat))
         (fun (lpush, (npop1, npop2)) ->
           assume (List.length lpush <= npop1 + npop2);
+
           (* Sequential pushes *)
-          let queue = queue_of_list lpush in
+          let q = Mpmc_queue.init ~num_domain:3 in
+          let wq = Mpmc_queue.register q in
+          push_list wq lpush;
           let sema = Semaphore.Counting.make 2 in
 
           let work npop =
@@ -127,14 +133,14 @@ let tests_two_domains =
             while Semaphore.Counting.get_value sema <> 0 do
               Domain.cpu_relax ()
             done;
-            pop_n queue npop
+            let wq = Mpmc_queue.register q in
+            pop_n wq npop
           in
+
           (* Popping domain 1 *)
           let domain1 = Domain.spawn (fun () -> work npop1) in
-
           (* Popping domain 2 *)
           let domain2 = Domain.spawn (fun () -> work npop2) in
-
           let pop1 = Domain.join domain1 in
           let pop2 = Domain.join domain2 in
 
@@ -150,8 +156,10 @@ let tests_two_domains =
       Test.make ~name:"parallel_pushes"
         (pair (list int) (pair (list int) (list int)))
         (fun (lpush, (lpush1, lpush2)) ->
-          (* Initialling the queue with sequential pushes *)
-          let queue = queue_of_list lpush in
+           (* Initialization *)
+          let q = Mpmc_queue.init ~num_domain:3 in
+          let wq = Mpmc_queue.register q in
+          push_list wq lpush;
 
           let sema = Semaphore.Counting.make 2 in
 
@@ -160,9 +168,10 @@ let tests_two_domains =
             while Semaphore.Counting.get_value sema <> 0 do
               Domain.cpu_relax ()
             done;
+            let wq = Mpmc_queue.register q in
             List.iter
               (fun elt ->
-                Mpmc_queue.push queue elt;
+                Mpmc_queue.push wq elt;
                 Domain.cpu_relax ())
               lpush
           in
@@ -178,7 +187,7 @@ let tests_two_domains =
 
           (* Sequential pops *)
           let all_values =
-            pop_n queue
+            pop_n wq
               (List.length lpush + List.length lpush1 + List.length lpush2)
           in
 
@@ -190,9 +199,8 @@ let tests_two_domains =
           in
 
           (* Testing property *)
-          Mpmc_queue.pop queue = None
-          &&
-          keep_n_first (List.length lpush) all_values |> keep_some = lpush
+          Mpmc_queue.pop wq = None
+          && keep_n_first (List.length lpush) all_values |> keep_some = lpush
           && compare n_last lpush1 lpush2);
     ]
 
@@ -200,7 +208,7 @@ let main () =
   let to_alcotest = List.map QCheck_alcotest.to_alcotest in
   Alcotest.run "Mpmc_queue"
     [
-       ("sequential_tests", to_alcotest tests_sequential);
+      ("sequential_tests", to_alcotest tests_sequential);
       ("two_domains_tests", to_alcotest tests_two_domains);
     ]
 ;;
