@@ -5,37 +5,60 @@
 
    http://www.cs.technion.ac.il/~erez/Papers/wfquque-ppopp.pdf
 
+  Example with 2 domains :
+   let queue = init ~num_domain:2 in
+   let wq1 = register queue in
+
+   let domain2 = Domain.spawn (fun () ->
+     let wq2 = register queue in
+     push wq2 42;
+     pop wq2
+   ) in
+
+   let n1 = pop wq1 in
+   let n2 = Domain.join domain2 in
+   n1, n2
 *)
 
 type 'a t
-(** Wait-free queue for multiple producers and multiples consumers. *)
+(** Wait-free queue for multiple producers and multiples consumers.
+ *)
 
 val init : num_domain:int -> 'a t
 (** [init ~num_domain:n] creates a wait-free queue that can be
    accessed by at maximum [n] domains. *)
 
 type 'a wt
+(** Describes a handler for an ['a t] queue. All domains working on a
+   queue must have their own handler for it. *)
 
 val register : 'a t -> 'a wt
-(** To work on a queue, a domain must register using this function. If
-   there are already the maximum number of domains registered (the
-   [~num_domain] argument of [init]), the exception
-   [Too_Many_Registered_Domains] is raised. If a domain tries to work on
-   a type [wt] returns by  *)
+(** [register q] builds a handler for [q] that enables the domain
+   calling this function to work on it. The resulting handler is own
+   by the calling domain and only him can use it. Otherwise, the
+   exception [Not_handler_owner] is raises.
 
-exception Not_queue_owner
+   A domain should call this function only once on a specific queue,
+   otherwise, it will take a slot and reduce the total number of
+   domains able to use the queue.
 
-exception Too_Many_Registered_Domains
-(** Exception raises if more domains than the number given at
-   initialization of the queue with [init] try to register with
+   If a domain calls [register] while there already are [n] registered
+   domains, with [n] being the value of [~num_domain] argument of
+   [init], the exception [Too_Many_Registered_Domains] is raised. *)
+
+exception Not_handler_owner
+
+exception Too_many_registered_domains
+(** Exception raises if more domains than the number given at the
+   initialization of the queue with [init] try to get a handler with
    [register]. *)
 
 val push : 'a wt -> 'a -> unit
-(** [push wq elt] adds [elt] at the end of the queue [wq]. The current
-   domain must own [wq] i.e. it must be the one that builds it with
-   [register]. *)
+(** [push wq elt] adds [elt] at the end of the queue handled by
+   [wq]. The current domain must own [wq] i.e. it must be the one that
+   builds it with [register]. *)
 
 val pop : 'a wt -> 'a option
-(** [pop wq elt] pops the head of the queue [wq]. The current domain
-   must own [wq] i.e. it must be the one that builds it with
-   [register]. *)
+(** [pop wq elt] pops the head of the queue handled by [wq]. The
+current domain must own [wq] i.e. it must be the one that builds it
+with [register]. *)

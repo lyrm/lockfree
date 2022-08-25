@@ -97,11 +97,11 @@ let init ~num_domain =
 
 type 'a wt = Domain.id * int * 'a t
 
-exception Too_Many_Registered_Domains
+exception Too_many_registered_domains
 
 let rec register t : 'a wt =
   let tid = Atomic.get t.register in
-  if tid >= Array.length t.state then raise Too_Many_Registered_Domains;
+  if tid >= Array.length t.state then raise Too_many_registered_domains;
   if Atomic.compare_and_set t.register tid (tid + 1) then
     (Domain.self (), tid, t)
   else register t
@@ -120,10 +120,10 @@ let is_still_pending t tid phase =
   (Atomic.get t.state.(tid)).pending
   && (Atomic.get t.state.(tid)).phase <= phase
 
-exception Not_queue_owner
+exception Not_handler_owner
 
 let rec enq ((tid, ind, t) : 'a wt) value =
-  if Domain.self () <> tid then raise Not_queue_owner;
+  if Domain.self () <> tid then raise Not_handler_owner;
   let phase = max_phase t + 1 in
   (* it may seem that evey case of the state array is accessed only by
      the [ind] domain but it is not the case ! An other may come to help. *)
@@ -133,7 +133,7 @@ let rec enq ((tid, ind, t) : 'a wt) value =
   help_finish_enq t
 
 and deq ((tid, ind, t) : 'a wt) =
-  if Domain.self () <> tid then raise Not_queue_owner;
+  if Domain.self () <> tid then raise Not_handler_owner;
   let phase = max_phase t + 1 in
   Atomic.set t.state.(ind) @@ init_op_desc phase true false None;
   help t phase;
