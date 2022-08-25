@@ -1,4 +1,20 @@
-(**
+(*
+ * Copyright (c) 2022, Carine Morel <carine@tarides.com>
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ *)
+
+(*
   Based on the paper :
    Wait-Free Queues With Multiple Enqueuers and Dequeuers
    A. Kogan, E. Petrank, 2011
@@ -13,23 +29,25 @@ type 'a t = {
   state : 'a op_desc Atomic.t Array.t;
   register : int Atomic.t;
 }
-(** Type representing the queue as a singly-linked list :
+(* Type representing the queue as a singly-linked list :
 
    - [head] : it is actually the "previous" head of the queue, i.e :
 
-     + when poping the value returned is [(head.next |> Option.get).value]
+     + when poping the returned value is [(head.next |>
+   Option.get).value]
 
      + an empty list is such as [head.next = None]
 
-   - [tail] : where new node are attached to form the queue
+   - [tail] : where new nodes are attached to form the queue
 
-   - [state] : described the current state of each domain, i.e are they
-    currently enqueuing or dequeuing ? And if so, which node ? Each
-    domain has its own box but all domains will read and write on it
+   - [state] : described the current state of each domain, i.e are
+   they currently enqueuing or dequeuing ? And if so, which node ?
+   Each domain has its own box but all domains will read and write on
+   it
 
-   - [tid_tbl] : enables to links the domain identifier (returns by
-    [Domain.self ()]) and its index in [state] field.
- *)
+   - [register] : each time a domain registers, it gets a number egal
+   to the current value of [register] that is then incremented. It
+   links a domain to a box in the array [state].*)
 
 and 'a node = {
   value : 'a option;
@@ -37,7 +55,7 @@ and 'a node = {
   enq_tid : int;
   deq_tid : int Atomic.t;
 }
-(** Holds one element of the queue.
+(* Holds one element of the queue.
 
    - [value] is the actual value of the node
 
@@ -61,7 +79,7 @@ and 'a op_desc = {
   enqueue : bool;
   node : 'a node option;
 }
-(** Operation descriptor of a domain.
+(* Operation descriptor of a domain.
 
     - [phase] : describes the age of the current (or previous, if no
    operation are in progress) operation. Younger operations are higher
@@ -97,11 +115,11 @@ let init ~num_domain =
 
 type 'a wt = Domain.id * int * 'a t
 
-exception Too_Many_Registered_Domains
+exception Too_many_registered_domains
 
 let rec register t : 'a wt =
   let tid = Atomic.get t.register in
-  if tid >= Array.length t.state then raise Too_Many_Registered_Domains;
+  if tid >= Array.length t.state then raise Too_many_registered_domains;
   if Atomic.compare_and_set t.register tid (tid + 1) then
     (Domain.self (), tid, t)
   else register t
@@ -120,10 +138,10 @@ let is_still_pending t tid phase =
   (Atomic.get t.state.(tid)).pending
   && (Atomic.get t.state.(tid)).phase <= phase
 
-exception Not_queue_owner
+exception Not_handler_owner
 
 let rec enq ((tid, ind, t) : 'a wt) value =
-  if Domain.self () <> tid then raise Not_queue_owner;
+  if Domain.self () <> tid then raise Not_handler_owner;
   let phase = max_phase t + 1 in
   (* it may seem that evey case of the state array is accessed only by
      the [ind] domain but it is not the case ! An other may come to help. *)
@@ -133,7 +151,7 @@ let rec enq ((tid, ind, t) : 'a wt) value =
   help_finish_enq t
 
 and deq ((tid, ind, t) : 'a wt) =
-  if Domain.self () <> tid then raise Not_queue_owner;
+  if Domain.self () <> tid then raise Not_handler_owner;
   let phase = max_phase t + 1 in
   Atomic.set t.state.(ind) @@ init_op_desc phase true false None;
   help t phase;

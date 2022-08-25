@@ -1,9 +1,7 @@
 module Mpmc_queue = Lockfree.Mpmc_queue
 
 (* Sequential building of a queue *)
-let push_list wq l =
-  List.iter (Mpmc_queue.push wq) l
-
+let push_list wq l = List.iter (Mpmc_queue.push wq) l
 
 (* [extract_n_from_d q f n] extract [n] elements of [q] by calling [n]
    times the function [f] on [q]. *)
@@ -100,7 +98,43 @@ let tests_sequential =
 let tests_two_domains =
   QCheck.
     [
-      (* TEST 1 - two domains in parallel
+      (* TEST 1 - two domains in parallel.
+         Checks that the proper error is raised if too many domains
+         try to registered. *)
+      Test.make ~name:"Too_many_registered_domains" (list int) (fun lpush ->
+          let q = Mpmc_queue.init ~num_domain:1 in
+          let wq = Mpmc_queue.register q in
+          push_list wq lpush;
+
+          let d1 =
+            Domain.spawn (fun () ->
+                try
+                  let _ = Mpmc_queue.register q in
+                  false
+                with Mpmc_queue.Too_many_registered_domains -> true)
+          in
+          (* Testing property *)
+          Domain.join d1);
+      (* TEST 2 - two domains in parallel.
+         Checks that the proper error is raised when a domain tries to
+         use a handler it does not own. *)
+      Test.make ~name:"Not_handler_owner"
+        (pair (list int) int)
+        (fun (lpush, i) ->
+          let q = Mpmc_queue.init ~num_domain:1 in
+          let wq = Mpmc_queue.register q in
+          push_list wq lpush;
+
+          let d1 =
+            Domain.spawn (fun () ->
+                try
+                  Mpmc_queue.push wq i;
+                  false
+                with Mpmc_queue.Not_handler_owner -> true)
+          in
+          (* Testing property *)
+          Domain.join d1);
+      (* TEST 3 - two domains in parallel
          Sequential pushes and concurrent pops.
 
          Checks that no [pop] are missing and that the result is
@@ -150,13 +184,13 @@ let tests_two_domains =
           && List.length pop1 = npop1
           && List.length pop2 = npop2
           && compare lpush (keep_some pop1) (keep_some pop2));
-      (* TEST 2 - two domains in parallel
+      (* TEST 4 - two domains in parallel
          Concurrent pushes then sequential pops.
       *)
       Test.make ~name:"parallel_pushes"
         (pair (list int) (pair (list int) (list int)))
         (fun (lpush, (lpush1, lpush2)) ->
-           (* Initialization *)
+          (* Initialization *)
           let q = Mpmc_queue.init ~num_domain:3 in
           let wq = Mpmc_queue.register q in
           push_list wq lpush;
