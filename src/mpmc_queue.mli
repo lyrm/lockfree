@@ -9,6 +9,8 @@
 
 type 'a t
 
+
+(* not enough domains raises Index out of bounds *)
 val init : num_domain:int -> 'a t
 val push : 'a t -> 'a -> unit
 val pop : 'a t -> 'a option

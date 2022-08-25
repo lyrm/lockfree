@@ -2,278 +2,207 @@ module Mpmc_queue = Lockfree.Mpmc_queue
 
 (* Sequential building of a queue *)
 let queue_of_list l =
-  let queue = Mpmc_queue.init ~num_domain:2 in
+  let queue = Mpmc_queue.init ~num_domain:4 in
   List.iter (Mpmc_queue.push queue) l;
   queue
 
 (* [extract_n_from_d q f n] extract [n] elements of [q] by calling [n]
    times the function [f] on [q]. *)
 let pop_n q n =
-  let rec loop acc =
-    function
+  let rec loop acc = function
     | 0 -> acc
     | n ->
         let a = Mpmc_queue.pop q in
-        loop (a :: acc) (n-1)
+        Domain.cpu_relax ();
+        loop (a :: acc) (n - 1)
   in
   loop [] n |> List.rev
 
-let _keep_some l =
-   List.filter Option.is_some l
-   |> List.map Option.get
+let keep_some l = List.filter Option.is_some l |> List.map Option.get
+let keep_n_first n = List.filteri (fun i _ -> i < n)
 
-let _keep_n_first n = List.filteri (fun i _ -> i < n)
+let none_at_the_end l =
+  let rec loop seen_a_none = function
+    | [] -> true
+    | Some _ :: xs -> if seen_a_none then false else loop seen_a_none xs
+    | None :: xs -> loop true xs
+  in
+  loop false l
+
+let rec compare l l1 l2 =
+  match (l, l1, l2) with
+  | [], [], [] -> true
+  | [], _, _ -> false
+  | _, [], _ -> l = l2
+  | _, _, [] -> l = l1
+  | x :: l', y :: l1', z :: l2' ->
+      if x = y && x = z then compare l' l1 l2' || compare l' l1' l2
+      else if x = y then compare l' l1' l2
+      else if x = z then compare l' l1 l2'
+      else false
 
 let tests_sequential =
-  [
-    (* TEST 1 - sequential :
-       forall l, l' and with q built by pushing in order (l@l')
-                pop q :: pop q :: pop q :: ... :: [] = List.rev l' *)
-    QCheck.(Test.make
-              ~name:"pops_are_in_order"
-              (pair (list int) (list int)) (fun (l, l') ->
-                  assume (l' <> []);
-                  let queue = queue_of_list (l@l') in
+  QCheck.
+    [
+      (* TEST 1 - sequential:
+         forall q and n, pop (push queue i; queue) = Some i*)
+      Test.make ~name:"push_and_pop"
+        (pair (list int) int)
+        (fun i ->
+          let queue = Mpmc_queue.init ~num_domain:1 in
 
-                  let pop_list = pop_n queue (List.length l) in
-                  List.map Option.get pop_list = l));
+          (* Testing property *)
+          Mpmc_queue.push queue i;
+          Mpmc_queue.pop queue = Some i);
+      (* TEST 2 - sequential:
+          [pop] on an empty queue returns None *)
+      Test.make ~name:"pop_empty" (list int) (fun lpush ->
+          (* Building a random queue *)
+          let q = queue_of_list lpush in
+          (* Popping until [is_empty q] is true*)
+          let _ = pop_n q (List.length lpush) in
 
-    (* TEST 2 - sequential :
-       forall q of size n, forall m > n,  poping m times returns (m-n) None. *)
-    QCheck.(Test.make
-              ~name:"pop_on_empty_queue_raises_exit" ~count:1
-              (pair (list int) small_nat) (fun (l, m) ->
-                  assume ( m > 0);
-                  let n = List.length l in
-                  let m = m + n in
-                  let queue = queue_of_list l in
+          (* Testing property *)
+          match Mpmc_queue.pop q with Some _ -> false | None -> true);
+      (* TEST 3 - sequential :
+         forall l, l' and with q built by pushing in order (l@l')
+                  pop q :: pop q :: pop q :: ... :: [] = List.rev l' *)
+      Test.make ~name:"pops_are_in_order"
+        (pair (list int) (list int))
+        (fun (l, l') ->
+          assume (l' <> []);
+          let queue = queue_of_list (l @ l') in
 
-                  let popped = pop_n queue m in
-                  let none_count =
-                    List.filter (function None -> true | _ -> false) popped
-                    |> List.length in
+          let pop_list = pop_n queue (List.length l) in
+          List.map Option.get pop_list = l);
+      (* TEST 4 - sequential :
+         forall q of size n, forall m > n, poping m times returns (m-n) None. *)
+      Test.make ~name:"popping_an_empty_queue_returns_None" ~count:1
+        (pair (list int) small_nat)
+        (fun (l, m) ->
+          assume (m > 0);
+          let n = List.length l in
+          let m = m + n in
+          let queue = queue_of_list l in
 
-                  none_count = m - n))]
+          let popped = pop_n queue m in
+          let none_count =
+            List.filter (function None -> true | _ -> false) popped
+            |> List.length
+          in
 
-(*let tests_two_domains =
-  [
-    (* TEST 1 with 1 producer, 1 stealer and sequential execution.
-       Producer domain pushes a list of value THEN a stealer domain
-       steals.
-
-       This checks :
-       - order is preserved (first push = first steal)
-       - Exit is raised only when the queue is empty *)
-    QCheck.(Test.make
-              ~name:"steals_are_in_order"
-              (pair (list int) small_nat) (fun (l, n) ->
-                 (* Main domain pushes all elements of [l] in order. *)
-                 let queue = queue_of_list l in
-
-                 (* Then the stealer domain steals [n] times. The output list
-                    is composed of all stolen value. If an [Exit] is raised,
-                    it is register as a [None] value in the returned list.*)
-                 let stealer =
-                   Domain.spawn (fun () ->
-                       let steal' queue =
-                           try Some (Mpmc_queue.steal queue)
-                           with Exit -> None in
-                       extract_n_of_queue queue steal' n) in
-                 let steal_list = Domain.join stealer in
-
-                 (* The stolen values should be the [n]th first elements of [l]*)
-                 (let expected_stolen = keep_n_first n l in
-                  let nfirst = keep_n_first (List.length l) steal_list in
-
-                 List.for_all2 (fun found_opt expected ->
-                     match found_opt with
-                     |  Some found -> found = expected
-                     | _ -> false)
-                   nfirst expected_stolen)
-                 &&
-                  (* The [n - (List.length l)] last values of [steal_list]
-                    should be [None] (i.e. the [steal] function had raised [Exit]). *)
-                 (let exits = List.filteri (fun i _ -> i >= (List.length l)) steal_list in
-                  List.for_all (function None -> true | _ -> false) exits)
-                ));
-
-    (* TEST 2 with 1 producer, 1 stealer and parallel execution.
-
-       Producer domain does pushes. Simultaneously the stealer domain steals.
-
-       This test checks :
-       - order is preserved (first push = first steal)
-       - Exit is raised only when the queue is empty *)
-      QCheck.(Test.make
-                ~name:"parallel_pushes_and_steals"
-                (pair (list small_int) (int_bound 200)) (fun (l, n) ->
-                    (* Initialization *)
-                    let queue = Mpmc_queue.create () in
-                    let sema = Semaphore.Binary.make false in
-
-                    (* The stealer domain steals n times. If a value [v] is stolen,
-                       it is registered as [Some v] in the returned list whereas any
-                       [Exit] raised is registered as a [None].*)
-                    let stealer =
-                      Domain.spawn (fun () ->
-                          Semaphore.Binary.release sema;
-                          let steal' queue =
-                            let res =
-                              try Some (Mpmc_queue.steal queue)
-                              with Exit -> None in
-                            Domain.cpu_relax (); res in
-                          extract_n_of_queue queue steal' n) in
-                    (* The semaphore is used to make sure the stealer domain has a
-                       chance to begin its works before the main domain has finished
-                       its. *)
-                    while not (Semaphore.Binary.try_acquire sema) do Domain.cpu_relax () done;
-                    (* Main domain pushes.*)
-                    List.iter (fun elt -> Mpmc_queue.push queue elt; Domain.cpu_relax ()) l;
-
-                    let steal_list = Domain.join stealer in
-
-                    (* We don't know how the pushes and the steals are interleaved
-                       but we can check that if [m] values have been stolen, they are
-                       the [m] first pushed values. *)
-                    List.length steal_list = n
-                    &&
-                    (let stolen = keep_some steal_list in
-                     let expected_stolen = keep_n_first (List.length stolen) l in
-                     stolen = expected_stolen)));
-
-    (* TEST 3 with 1 producer, 1 stealer and parallel execution.
-
-       Main domain does sequential pushes and then pops at the same time that a
-       stealer domain steals.
-
-       This test checks :
-       - order is preserved (first push = first steal, first push = last pop)
-       - no value is both popped and stolen.
-
-       We actually have a strong property here, as all the [push] calls are done before
-       [pop] and [steal] calls :
-
-       stolen_values @ (List.rev popped_values) = pushed_values *)
-      QCheck.(Test.make
-                ~name:"parallel_pops_and_steals"
-                (pair (list small_int) (pair small_nat small_nat)) (fun (l, (nsteal, npop)) ->
-                    assume (nsteal+npop > List.length l);
-                    (* Initialization - sequential pushes*)
-                    let queue = queue_of_list l in
-                    let sema = Semaphore.Binary.make false in
-                    let _ =  Random.self_init () in
-                    let pop' queue =
-                      let res = try Some (Mpmc_queue.pop queue)
-                      with Exit -> None in
-                      Domain.cpu_relax (); res in
-
-                    (* The stealer domain steals [nsteal] times. If a value [v] is stolen,
-                       it is registered as [Some v] in the returned list whereas any [Exit]
-                       raised, it is registered as a [None].*)
-                    let stealer =
-                      Domain.spawn (fun () ->
-                          Semaphore.Binary.release sema;
-                          let steal' queue =
-                            let res =
-                              try Some (Mpmc_queue.steal queue)
-                              with Exit -> None in
-                            Domain.cpu_relax (); res
-                          in
-                          extract_n_of_queue queue steal' nsteal) in
-                    (* The semaphore is used to make sure the stealer domain has a
-                       chance to begin its works before the main domain has finished its. *)
-                   while not (Semaphore.Binary.try_acquire sema) do Domain.cpu_relax () done;
-                    (* Main domain pops and builds a list of popped values. *)
-                    let pop_list = extract_n_of_queue queue pop' npop  in
-
-                    let steal_list = Domain.join stealer in
-
-                    (* All the pushes are done sequentially before the run so whatever
-                       how pops and steals are interleaved if [npop + nsteal > npush]
-                       we should have stolen @ (List.rev popped) = pushed . *)
-                    List.length steal_list = nsteal &&
-                    List.length pop_list = npop &&
-                    (let stolen = keep_some steal_list in
-                     let popped = keep_some pop_list in
-                     stolen @ (List.rev popped) = l)))
-  ]
-
-let tests_one_producer_two_stealers =
-  [
-    (* TEST 1 with 1 producer, 2 stealers and parallel steal calls.
-
-       Producer domain does sequential pushes. Two stealers steal simultaneously.
-
-       This test checks :
-       - order is preserved (first push = first steal)
-       - no element is stolen by both stealers
-       - Exit is raised only when the queue is empty  *)
-      QCheck.(Test.make
-                ~name:"parallel_steals"
-                (pair (list small_int) (pair small_nat small_nat)) (fun (l, (ns1, ns2)) ->
-                    (* Initialization *)
-                    let queue = queue_of_list l in
-                    let sema = Semaphore.Counting.make 2 in
-
-                    (* Steal calls *)
-                    let multiple_steal queue nsteal =
-                      Semaphore.Counting.acquire sema;
-                      let res = Array.make nsteal None in
-                      while Semaphore.Counting.get_value sema <> 0 do
-                        Domain.cpu_relax ()
-                      done;
-                      for i = 0 to nsteal - 1 do
-                        (res.(i) <- try Some (Mpmc_queue.steal queue) with Exit -> None);
-                        Domain.cpu_relax ()
-                      done ;
-                      res
-                    in
-
-                    let stealer1 = Domain.spawn (fun  () -> multiple_steal queue ns1) in
-                    let stealer2 = Domain.spawn (fun  () -> multiple_steal queue ns2) in
-
-                    let steal_list1 = Domain.join stealer1 in
-                    let steal_list2 = Domain.join stealer2 in
-
-                    let stolen1 = keep_some (Array.to_list steal_list1) in
-                    let stolen2 = keep_some (Array.to_list steal_list2) in
-
-                    (* We expect the stolen values to be the first ones that have been
-                       pushed. *)
-                    let expected_stolen = keep_n_first (ns1+ns2) l in
-
-                    (* [compare l l1 l2] checks that there exists an interlacing of
-                       the stolen values [l1] and [l2] that is equal to the beginning
-                       of the push list [l]. *)
-                    let rec compare l l1 l2 =
-                      match l, l1, l2 with
-                      | [], [] , [] -> true
-                      | [], _, _ -> false
-                      | _, [], _ -> l = l2
-                      | _, _, [] -> l = l1
-                      | x :: l', y :: l1', z :: l2' ->
-                          begin
-                            if x = y && x = z then
-                              compare l' l1 l2' || compare l' l1' l2
-                            else if x = y then
-                              compare l' l1' l2
-                            else if x = z then
-                              compare l' l1 l2'
-                            else false end
-                    in
-
-                    Array.length steal_list1 = ns1 &&
-                    Array.length steal_list2 = ns2 &&
-                    compare expected_stolen stolen1 stolen2
-                  ))
+          none_count = m - n);
     ]
-*)
+
+let tests_two_domains =
+  QCheck.
+    [
+      (* TEST 1 - two domains in parallel
+         Sequential pushes and concurrent pops.
+
+         Checks that no [pop] are missing and that the result is
+         linearisable, meaning it is possible to merge popped values
+         of both domains to obtain the pushed values without reordering.
+
+         For example, if [1;2;3] is pushed, acceptable outputs would be :
+         - [Some 1; Some 2; None; None] and [Some 3; None]
+         - [None; None] and [Some 1; Some 2; Some 3; None; None]
+         - [Some 1; Some 3] and [Some 2; None; None]
+
+         Unacceptable outputs are :
+         - [None; Some 1] and [Some 2; Some 3]
+         - [Some 2; Some 1] and [Some 3]
+         - [Some 1; None] and [Some 2; None]
+      *)
+      Test.make ~name:"parallel_pops"
+        (pair (list int) (pair small_nat small_nat))
+        (fun (lpush, (npop1, npop2)) ->
+          assume (List.length lpush <= npop1 + npop2);
+          (* Sequential pushes *)
+          let queue = queue_of_list lpush in
+          let sema = Semaphore.Counting.make 2 in
+
+          let work npop =
+            Semaphore.Counting.acquire sema;
+            while Semaphore.Counting.get_value sema <> 0 do
+              Domain.cpu_relax ()
+            done;
+            pop_n queue npop
+          in
+          (* Popping domain 1 *)
+          let domain1 = Domain.spawn (fun () -> work npop1) in
+
+          (* Popping domain 2 *)
+          let domain2 = Domain.spawn (fun () -> work npop2) in
+
+          let pop1 = Domain.join domain1 in
+          let pop2 = Domain.join domain2 in
+
+          (* Testing property *)
+          none_at_the_end pop1
+          && none_at_the_end pop2
+          && List.length pop1 = npop1
+          && List.length pop2 = npop2
+          && compare lpush (keep_some pop1) (keep_some pop2));
+      (* TEST 2 - two domains in parallel
+         Concurrent pushes then sequential pops.
+      *)
+      Test.make ~name:"parallel_pushes"
+        (pair (list int) (pair (list int) (list int)))
+        (fun (lpush, (lpush1, lpush2)) ->
+          (* Initialling the queue with sequential pushes *)
+          let queue = queue_of_list lpush in
+
+          let sema = Semaphore.Counting.make 2 in
+
+          let work lpush =
+            Semaphore.Counting.acquire sema;
+            while Semaphore.Counting.get_value sema <> 0 do
+              Domain.cpu_relax ()
+            done;
+            List.iter
+              (fun elt ->
+                Mpmc_queue.push queue elt;
+                Domain.cpu_relax ())
+              lpush
+          in
+
+          (* Domain 1 : pushes all values of [lpush1] *)
+          let domain1 = Domain.spawn (fun () -> work lpush1) in
+
+          (* Domain 1 : pushes all values of [lpush1] *)
+          let domain2 = Domain.spawn (fun () -> work lpush2) in
+
+          let () = Domain.join domain1 in
+          let () = Domain.join domain2 in
+
+          (* Sequential pops *)
+          let all_values =
+            pop_n queue
+              (List.length lpush + List.length lpush1 + List.length lpush2)
+          in
+
+          let n_last =
+            List.rev all_values
+            |> keep_n_first (List.length lpush1 + List.length lpush2)
+            |> List.rev
+            |> keep_some
+          in
+
+          (* Testing property *)
+          Mpmc_queue.pop queue = None
+          &&
+          keep_n_first (List.length lpush) all_values |> keep_some = lpush
+          && compare n_last lpush1 lpush2);
+    ]
 
 let main () =
-  let to_alcotest = List.map QCheck_alcotest.to_alcotest  in
-  Alcotest.run "Mpmc_queue" [
-    "one_domains", to_alcotest tests_sequential;
-    (*"two_domains", to_alcotest tests_two_domains;*) ]
+  let to_alcotest = List.map QCheck_alcotest.to_alcotest in
+  Alcotest.run "Mpmc_queue"
+    [
+       ("sequential_tests", to_alcotest tests_sequential);
+      ("two_domains_tests", to_alcotest tests_two_domains);
+    ]
 ;;
 
 main ()

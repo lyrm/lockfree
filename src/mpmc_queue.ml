@@ -118,36 +118,6 @@ let init ~num_domain =
     tid_tbl = { init = Atomic.make 0; tbl = Hashtbl.create num_domain };
   }
 
-(*
-let test () =
-  let t = init 4 in
-  let sema = Semaphore.Counting.make 4 in
-  let test_th () =
-    Semaphore.Counting.acquire sema;
-    while Semaphore.Counting.get_value sema <> 0 do
-      Domain.cpu_relax ()
-    done;
-    let ind = ind_of_id t @@ Domain.self () in
-    Atomic.set t.state.(ind)
-      { (Atomic.get t.state.(ind)) with phase = Atomic.get t.tid_tbl.init }
-  in
-  let domains = Array.init 4 (fun i -> Domain.spawn test_th) in
-  let (_ : unit Array.t) = Array.map (fun d -> Domain.join d) domains in
-  Array.init 4 (fun id -> (Atomic.get t.state.(id)).phase)
-
-let loop n =
-  for i = 0 to n do
-    let res = test () in
-    if not (Array.for_all (fun elt -> elt <> -1) res) then (
-      Array.iter
-        (fun elt ->
-          print_int elt;
-          print_string "")
-        res;
-      print_endline "")
-  done
-*)
-
 let max_phase t =
   Array.fold_left
     (fun max elt -> Int.max (Atomic.get elt).phase max)
