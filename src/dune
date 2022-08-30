@@ -1,3 +1,4 @@
 (library
  (name lockfree)
+ (libraries base)
  (public_name lockfree))
