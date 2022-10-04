@@ -1,0 +1,4 @@
+(test
+ (name qcheck_llist)
+ (libraries lockfree qcheck qcheck-alcotest)
+ (modules qcheck_llist))
