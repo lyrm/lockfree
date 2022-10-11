@@ -6,7 +6,7 @@ module IntSet = Set.Make (struct
   let compare = compare
 end)
 
-let _exclusion l l' =
+let exclusion l l' =
   let s = IntSet.of_list l in
   let s' = IntSet.of_list l' in
   IntSet.diff s (IntSet.inter s s') |> IntSet.elements
@@ -21,11 +21,10 @@ let tests_one_domain =
          insertion should success. *)
       Test.make ~name:"seq_insert" int_list (fun l ->
           let open Llist in
-          let t = init ~num_domains:2 () in
-          let rt = register t in
+          let t = init () in
 
           let l = List.sort_uniq (fun a b -> -compare a b) l in
-          List.for_all (fun elt -> insert elt rt) l);
+          List.for_all (fun elt -> insert elt t) l);
       (* Add a list of elements in a linked list and checks :
 
          - the elements that have already been added, the [insert]
@@ -35,10 +34,9 @@ let tests_one_domain =
       *)
       Test.make ~name:"seq_insert2" int_list (fun l ->
           let open Llist in
-          let t = init ~num_domains:2 () in
-          let rt = register t in
+          let t = init () in
 
-          let has_been_added = List.map (fun elt -> insert elt rt) l in
+          let has_been_added = List.map (fun elt -> insert elt t) l in
 
           let rec loop prev l has_been_added =
             match (l, has_been_added) with
@@ -53,16 +51,42 @@ let tests_one_domain =
           loop [] l has_been_added
           &&
           let uniq = List.sort compare l in
-          List.for_all (fun elt -> mem elt rt) uniq);
+          List.for_all (fun elt -> mem elt t) uniq);
     ]
 
 let tests_two_domains =
   QCheck.
     [
-      Test.make ~name:"insert_insert" ~count:100 (pair int_list int_list)
+      Test.make ~name:"insert_insert1" ~count:10000 (pair int_list int_list)
         (fun (l, l') ->
           let open Llist in
-          let t = init ~num_domains:3 () in
+          let t = init () in
+          let sema = Semaphore.Binary.make false in
+
+          let l = List.sort_uniq compare l in
+          let l' = List.sort_uniq compare l' in
+          let l' = List.filter (fun elt -> not (List.mem elt l)) l' in
+
+          let d1 =
+            Domain.spawn (fun () ->
+                while not (Semaphore.Binary.try_acquire sema) do
+                  Domain.cpu_relax ()
+                done;
+                List.map (fun i -> insert i t) l)
+          in
+          let d2 =
+            Domain.spawn (fun () ->
+                Semaphore.Binary.release sema;
+                List.map (fun i -> insert i t) l')
+          in
+          let res1 = Domain.join d1 in
+          let res2 = Domain.join d2 in
+
+          List.for_all (fun i -> i) res1 && List.for_all (fun i -> i) res2);
+      Test.make ~name:"insert_insert" ~count:10000 (pair int_list int_list)
+        (fun (l, l') ->
+          let open Llist in
+          let t = init () in
           let sema = Semaphore.Binary.make false in
 
           let d1 =
@@ -70,47 +94,18 @@ let tests_two_domains =
                 while not (Semaphore.Binary.try_acquire sema) do
                   Domain.cpu_relax ()
                 done;
-                let rt = register t in
-                List.iter (fun i -> ignore @@ insert i rt) l)
+                List.iter (fun i -> ignore @@ insert i t) l)
           in
           let d2 =
             Domain.spawn (fun () ->
                 Semaphore.Binary.release sema;
-                let rt = register t in
-                List.iter (fun i -> ignore @@ insert i rt) l')
+                List.iter (fun i -> ignore @@ insert i t) l')
           in
           let () = Domain.join d1 in
           let () = Domain.join d2 in
 
-          let rt = register t in
-          List.for_all (fun elt -> mem elt rt) (l @ l'));
-      Test.make ~name:"insert_insert" ~count:100 (pair int_list int_list)
-        (fun (l, l') ->
-          let open Llist in
-          let t = init ~num_domains:3 () in
-          let sema = Semaphore.Binary.make false in
-
-          let d1 =
-            Domain.spawn (fun () ->
-                while not (Semaphore.Binary.try_acquire sema) do
-                  Domain.cpu_relax ()
-                done;
-                let rt = register t in
-                List.iter (fun i -> ignore @@ insert i rt) l)
-          in
-          let d2 =
-            Domain.spawn (fun () ->
-                Semaphore.Binary.release sema;
-                let rt = register t in
-                List.iter (fun i -> ignore @@ insert i rt) l')
-          in
-          let () = Domain.join d1 in
-          let () = Domain.join d2 in
-
-          let rt = register t in
-          List.for_all (fun elt -> mem elt rt) (l @ l'));
-      (*
-      Test.make ~name:"delete_delete" ~count:1000
+          List.for_all (fun elt -> mem elt t) (l @ l'));
+      Test.make ~name:"delete_delete"
         (pair int_list (pair int_list int_list))
         (fun (l, (l', l'')) ->
           let open Llist in
@@ -160,7 +155,7 @@ let tests_two_domains =
           List.for_all2
             (fun has_been_deleted k ->
               if has_been_deleted then not (mem k t) else mem k t)
-            delete l);*)
+            delete l);
     ]
 
 let main () =
