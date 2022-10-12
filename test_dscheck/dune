@@ -1,0 +1,9 @@
+(executable
+ (name test_llist)
+ (modules test_llist)
+ (libraries dscheck lockfree))
+
+(executable
+ (name test_dscheck)
+ (modules test_dscheck)
+ (libraries dscheck))

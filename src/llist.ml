@@ -1,3 +1,5 @@
+module Atomic = Dscheck.TracedAtomic
+
 type 'a node = { key : 'a; next : (bool * 'a node option) Atomic.t }
 type 'a t = (bool * 'a node option) Atomic.t
 

@@ -1,4 +1,4 @@
 (library
  (name lockfree)
- (libraries integers)
+ (libraries integers dscheck)
  (public_name lockfree))
