@@ -77,39 +77,33 @@ let random_list ?(max = 100) n =
    contained in [ls] in parallel. It checks with [find] that all
    unique elements of all lists in [ls] are in the resulting list. *)
 let test_insert_par (ls, unique_elts) =
-  let t = Llist.init ~num_domains:(Array.length ls + 1) () in
+  let t = Llist.init () in
   let sema = Semaphore.Counting.make (Array.length ls) in
 
   let work l =
-    let rt = Llist.register t in
     Semaphore.Counting.acquire sema;
     while Semaphore.Counting.get_value sema <> 0 do
       Domain.cpu_relax ()
     done;
-    List.iter (fun elt -> Llist.insert elt rt |> ignore) l
+    List.iter (fun elt -> Llist.insert elt t |> ignore) l
   in
   let domains = Array.map (fun l -> Domain.spawn (fun () -> work l)) ls in
   Array.iter Domain.join domains;
 
-  let rt = Llist.register t in
-  let res = List.for_all (fun elt -> Llist.mem elt rt) unique_elts in
-  Llist.close t;
+  let res = List.for_all (fun elt -> Llist.mem elt t) unique_elts in
   if not res then failwith "error insert par"
 
 (** [test_insert_seq] does the same as [test_insert_par] but with only
    one domains, inserting the lists sequentially. *)
 let test_insert_seq (ls, unique_elts) =
-  let t = Llist.init ~num_domains:(Array.length ls + 1) () in
-  let rt = Llist.register t in
+  let t = Llist.init () in
   Array.iter
     (fun l ->
       Domain.spawn (fun () ->
-          let rt = Llist.register t in
-          List.iter (fun elt -> Llist.insert elt rt |> ignore) l)
+          List.iter (fun elt -> Llist.insert elt t |> ignore) l)
       |> Domain.join)
     ls;
-  let res = List.for_all (fun elt -> Llist.mem elt rt) unique_elts in
-  Llist.close t;
+  let res = List.for_all (fun elt -> Llist.mem elt t) unique_elts in
   if not res then failwith "error insert seq"
 
 (** [test_insert_sslist] does the same as [test_insert_seq] but with
@@ -151,11 +145,11 @@ let test_insert () =
 
  *)
   Random.self_init ();
-  let ntest = 100000 in
-  let nsize = 10 in
-  let ndomains = 2 in
+  let ntest = 10000 in
+  let nsize = 100 in
+  let ndomains = 3 in
   let list_size = nsize / ndomains in
-  let max = nsize * 10 in
+  let max = nsize in
 
   let ls = Array.init ndomains (fun _i -> random_list list_size ~max) in
   let unique_elts =
@@ -174,8 +168,8 @@ let test_insert () =
   let test_insert_seq () = test_insert_seq ls_uni in
   let test_insert_par () = test_insert_par ls_uni in
 
-  let tseq = measure_and_launch_n_tests ntest test_insert_seq in
-  let tpar = measure_and_launch_n_tests ntest test_insert_par in
+  let tpar = measure_and_launch_n_tests ntest test_insert_seq in
+  let tseq = measure_and_launch_n_tests ntest test_insert_par in
   let tseq2 = measure_and_launch_n_tests ntest test_insert_sllist in
 
   Format.printf
