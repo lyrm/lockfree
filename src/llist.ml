@@ -80,7 +80,9 @@ let delete (key : 'a) (t : 'a t) =
         not (Atomic.compare_and_set curr.next local.next (true, snd local.next))
       then loop ()
       else if Atomic.compare_and_set local.prev local.curr local.next then true
-      else not (find key t |> fst)
+      else (
+        ignore (find key t);
+        true)
   in
   loop ()
 
