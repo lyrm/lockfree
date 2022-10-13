@@ -3,7 +3,7 @@ module Atomic = Dscheck.TracedAtomic
 let total_checked = ref 0
 
 module C = struct
-  let init () = Atomic.make 0
+  let init () = Format.printf "init@."; Atomic.make 0
 
   let may_incr c a =
     let n =
@@ -26,7 +26,16 @@ module C = struct
        n - a)
 end
 
-let test_dummy1 init add rm =
+let _test_dummy0 ()=
+  let c = C.init () in
+  let _ = C.may_incr c 2 in
+  let _ = C.may_decr c 10 in
+  Format.printf "HERE %d@." (Atomic.get c);
+  Atomic.spawn (fun () -> C.may_incr c 2 |> ignore );
+  Atomic.final (fun () -> Atomic.check (fun () -> Atomic.get c = -6))
+
+
+let _test_dummy1 init add rm =
   let c = C.init () in
   let rec loop () = if C.may_incr c init then () else loop () in
   loop ();
@@ -75,5 +84,5 @@ let _test_dummy () =
               Atomic.get c = -9))
 
 let () =
-  Atomic.trace (fun () -> test_dummy1 10 1 3);
+  Atomic.trace (fun () -> _test_dummy0 ());
   Printf.printf "Total checked: %d\n" !total_checked

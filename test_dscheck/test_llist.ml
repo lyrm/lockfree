@@ -9,7 +9,7 @@ let llist_of_list list =
   t
 
 (* insert/delete *)
-let test1 n l =
+let _test1 n l =
   (* initialisation *)
   let t = llist_of_list l in
   let is_inserted = ref false in
@@ -86,53 +86,53 @@ let _test4 m n l =
             && (not @@ Llist.mem n t)))
 
 let () =
-  let l1234 = [ 1; 2; 3; 4 ] in
+  let l12 = [ 1; 2 ] in
   (* Test 1 : Insert and delete the same element in parallel *)
   (* with the empty list *)
-  Atomic.trace (fun () -> test1 0 []);
+  Atomic.trace (fun () -> _test1 0 []);
   (* an element in the input llist *)
-  Atomic.trace (fun () -> test1 1 l1234); (*
+  Atomic.trace (fun () -> _test1 2 l12);
   (* an element that is not in the input llist *)
-    Atomic.trace (fun () -> test1 5 l1234);*)
+  Atomic.trace (fun () -> _test1 5 l12);
 
   (* Test 2 : Delete and insert the same element in parallel *)
   (* with the empty list *)
-  (*Atomic.trace (fun () -> test2 0 []);
+  Atomic.trace (fun () -> _test2 0 []);
   (* an element in the input llist *)
-  Atomic.trace (fun () -> test2 1 l1234);
+  Atomic.trace (fun () -> _test2 2 l12);
   (* an element that is not in the input llist *)
-  Atomic.trace (fun () -> test2 5 l1234);
+  Atomic.trace (fun () -> _test2 5 l12);
 
   (* Test 2 : Inserting 2 elements in parallel *)
   (* twice the same element in an empty list *)
-  Atomic.trace (fun () -> test3 0 0 []);
+  Atomic.trace (fun () -> _test3 0 0 []);
   (* two different elements in an empty list *)
-  Atomic.trace (fun () -> test3 0 1 []);
+  Atomic.trace (fun () -> _test3 0 1 []);
   (* twice the same element in the input llist *)
-  Atomic.trace (fun () -> test3 1 1 l1234);
+  Atomic.trace (fun () -> _test3 1 1 l12);
   (* twice the same element not in input llist *)
-  Atomic.trace (fun () -> test3 5 5 l1234);
+  Atomic.trace (fun () -> _test3 5 5 l12);
   (* 2 differents elements both in input llist *)
-  Atomic.trace (fun () -> test3 1 2 l1234);
-  Atomic.trace (fun () -> test3 2 1 l1234);
+  Atomic.trace (fun () -> _test3 1 2 l12);
+  Atomic.trace (fun () -> _test3 2 1 l12);
   (* 2 differents elements not in input llist *)
-  Atomic.trace (fun () -> test3 5 6 l1234);
+  Atomic.trace (fun () -> _test3 5 6 l12);
   (* 2 differents elements, one in the input llist*)
-  Atomic.trace (fun () -> test3 1 5 l1234);
+  Atomic.trace (fun () -> _test3 1 5 l12);
 
   (* Test 3 : Deleting 2 elements in parallel *)
   (* twice the same element in an empty list *)
-  Atomic.trace (fun () -> test4 0 0 []);
+  Atomic.trace (fun () -> _test4 0 0 []);
   (* two different elements in an empty list *)
-  Atomic.trace (fun () -> test4 0 1 []);
+  Atomic.trace (fun () -> _test4 0 1 []);
   (* twice the same element in the input llist *)
-  Atomic.trace (fun () -> test4 1 1 l1234);
+  Atomic.trace (fun () -> _test4 1 1 l12);
   (* twice the same element not in input llist *)
-  Atomic.trace (fun () -> test4 5 5 l1234);
+  Atomic.trace (fun () -> _test4 5 5 l12);
   (* 2 differents elements both in input llist *)
-  Atomic.trace (fun () -> test4 1 2 l1234);
+  Atomic.trace (fun () -> _test4 1 2 l12);
   (* 2 differents elements not in input llist *)
-  Atomic.trace (fun () -> test4 5 6 l1234);
+  Atomic.trace (fun () -> _test4 5 6 l12);
   (* 2 differents elements, one in the input llist*)
-    Atomic.trace (fun () -> test4 1 5 l1234);*)
+  Atomic.trace (fun () -> _test4 1 5 l12);
   Printf.printf "Total checked: %d\n" !total_checked
