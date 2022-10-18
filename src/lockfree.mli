@@ -37,4 +37,5 @@ module Treiber_stack = Treiber_stack
 module Michael_scott_queue = Michael_scott_queue
 module Mpmc_relaxed_queue = Mpmc_relaxed_queue
 module Backoff = Backoff
-module Linked_list = Llist
+module Linked_list = Htbl.Llist
+module Hshtbl = Htbl.Htbl
