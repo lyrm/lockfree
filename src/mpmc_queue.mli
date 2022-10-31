@@ -1,8 +1,9 @@
-(** A lock-free multi-producer, multi-consumer, thread-safe queue. 
-    
-    Note: in extreme cases the structure may occassionaly violate FIFO 
-    order. 
+(** A lock-free multi-producer, multi-consumer, thread-safe queue.
+
+    Note: in extreme cases the structure may occassionaly violate FIFO
+    order.
 *)
+module Atomic = Dscheck.TracedAtomic
 
 type 'a t = private {
   array : 'a Option.t Atomic.t Array.t;
@@ -24,14 +25,14 @@ val pop : 'a t -> 'a option
 (** [pop t] removes the head item from [t] and returns it.
     Returns [None] if [t] is currently empty. *)
 
-module CAS_interface : sig 
-    (* Alternative interface, which may perform better on architectures without 
-       FAD instructions (e.g. AArch). 
+module CAS_interface : sig
+    (* Alternative interface, which may perform better on architectures without
+       FAD instructions (e.g. AArch).
 
-       CAS_interface should not be the default choice. It may be a little faster 
+       CAS_interface should not be the default choice. It may be a little faster
        on ARM, but it is going to be a few times slower than standard on x86.
        *)
 
-    val push : 'a t -> 'a -> bool 
+    val push : 'a t -> 'a -> bool
     val pop : 'a t -> 'a option
 end
