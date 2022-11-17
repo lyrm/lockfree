@@ -66,36 +66,71 @@ module Local = struct
     in
     loop 0
 
+  let free_help_cell help_cell =
+    let help_cell_val = Atomic.get help_cell in
+    match help_cell_val with
+    | { free = true; v = None } -> ()
+    | { free = true; v = Some _ } -> failwith "free_help_cell issue #1"
+    | { free = false; _ } ->
+        Atomic.compare_and_set help_cell help_cell_val { free = true; v = None }
+        |> ignore
+
   let rec push ({ tail; head; mask; array; _ } as t) element =
     let tail_val = Atomic.get tail in
     let head_val = Atomic.get head in
     let size = mask + 1 in
     let current_size = tail_val - head_val in
-    assert (current_size <= size);
+    if current_size > size then failwith "push issue #1";
     if current_size = size then false
     else
+      (* The queue is no full *)
       let index = tail_val land mask in
       let cell = Array.get array index in
       let cell_val = Atomic.get cell in
-      (match cell_val with None -> () | Some _ -> help_steal t tail_val);
-      assert (
-        Atomic.compare_and_set cell cell_val
-          (Some { value = element; ind = None }));
+      let cell_val =
+        match cell_val with
+        | None -> cell_val
+        | Some _ ->
+            (* a stealer is still stealing this cell, the
+               producer needs to help finish this operation
+               before resuming its own. *)
+            help_steal t tail_val;
+            Atomic.get cell
+      in
+      (match cell_val with None -> () | Some _ -> failwith "push issue #2");
+      if
+        not
+          (Atomic.compare_and_set cell cell_val
+             (Some { value = element; ind = None }))
+      then failwith "push issue #3";
       Atomic.set tail (tail_val + 1);
       true
 
-  and help_steal { mask; array; help_arr; _ } tail_val : unit =
+  and help_steal ({ mask; array; help_arr; help_mask; _ } as t) tail_val : unit
+      =
     let cell_index = tail_val land mask in
     let cell = Array.get array cell_index in
     let cell_val = Atomic.get cell in
     match cell_val with
     | None -> () (* stealer has finished stealing *)
     | Some { value; ind } as node -> (
+        (* stealer still needs help *)
         match ind with
         | None ->
-            (* could this case even happens ? *)
-            assert (Atomic.get cell = None)
-        (* stealer has finished stealing, sanity checks *)
+            (* the stealer has not booked a helping cell yet :
+               producer tries to do it itself *)
+            let help_ind = book_helping_cell t in
+            (if
+             not
+               (Atomic.compare_and_set cell cell_val
+                  (Some { value; ind = Some help_ind }))
+            then
+             (* Stealer must have progressed -> producer needs to
+                free the helping cell *)
+             let help_cell = Array.get help_arr (help_ind land help_mask) in
+             free_help_cell help_cell);
+            (* either ways, we can relaunch the help function *)
+            help_steal t tail_val
         | Some hind -> (
             let help_cell = help_arr.(hind) in
             let help_cell_val = Atomic.get help_cell in
@@ -112,8 +147,10 @@ module Local = struct
                        in the help array or this CAS did not work, which means
                        the stealer has done its jobs -> both case are Ok. *)
                 else () (* stealer has finished stealing *)
-            | { free = true; _ } -> assert (Atomic.get cell = None)
-            | { free = false; _ } -> failwith "help_steal issue #1"))
+            | { free = true; _ } ->
+                if not (Atomic.get cell = None) then
+                  failwith "help_steal issue #2"
+            | { free = false; _ } -> failwith "help_steal issue #3"))
 
   and steal_one ({ head; tail; mask; array; help_arr; help_mask; _ } as t) =
     (* assumes there's space in the queue *)
@@ -122,25 +159,22 @@ module Local = struct
     let size = tail_val - head_val in
     if size < 1 then raise Exit
     else
+      (* stealer gets its own helping cell *)
       let help_ind = book_helping_cell t land help_mask in
       let help_cell = help_arr.(help_ind) in
       let new_head_val = head_val + 1 in
       let acquired_item = Atomic.compare_and_set head head_val new_head_val in
 
-      if not acquired_item then
-        (* sanity checks, a set on [help_cell] should be enough *)
-        let help_cell_val = Atomic.get help_cell in
-        match help_cell_val with
-        | { free = false; v = None } ->
-            assert (
-              Atomic.compare_and_set help_cell help_cell_val
-                { free = true; v = None });
-            raise Exit
-        | _ -> failwith "steal_one issue #1"
+      if not acquired_item then (
+        (* sanity checks: here an [Atomic.set] on [help_cell] should
+           be enough *)
+        free_help_cell help_cell;
+        raise Exit)
       else
         let index = head_val land mask in
         let cell = Array.get array index in
         let node = Atomic.get cell in
+
         if Atomic.compare_and_set cell node None then (
           (* A CAS on [from_help_cell] would not work here because
              [push] may have changed its value, but that alright : the
