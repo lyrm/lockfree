@@ -22,3 +22,8 @@
  (name treiber_stack)
  (libraries lockfree lockfree.atomic_traced dscheck alcotest)
  (modules treiber_stack))
+
+(test
+ (name linked_list)
+ (libraries lockfree lockfree.atomic_traced dscheck alcotest)
+ (modules linked_list))

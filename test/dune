@@ -37,3 +37,8 @@
  (name test_mpmc_relaxed_queue)
  (libraries lockfree unix alcotest)
  (modules test_mpmc_relaxed_queue))
+
+(test
+ (name qcheck_linked_list)
+ (libraries lockfree qcheck qcheck-alcotest)
+ (modules qcheck_linked_list))
