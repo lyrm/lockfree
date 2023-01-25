@@ -7,3 +7,10 @@
  (name qcheck_htbl)
  (libraries lockfree qcheck qcheck-alcotest)
  (modules qcheck_htbl))
+
+(test
+ (name stm_htbl)
+ (modules stm_htbl)
+ (libraries lockfree qcheck-stm.sequential qcheck-stm.domain)
+ (action
+  (run %{test} --verbose)))

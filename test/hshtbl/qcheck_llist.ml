@@ -105,7 +105,7 @@ let tests_two_domains =
           let () = Domain.join d2 in
 
           List.for_all (fun elt -> mem elt t) (l @ l'));
-      Test.make ~name:"delete_delete"
+      Test.make ~name:"remove_remove"
         (pair int_list (pair int_list int_list))
         (fun (l, (l', l'')) ->
           let open Llist in
@@ -118,19 +118,19 @@ let tests_two_domains =
                 while not (Semaphore.Binary.try_acquire sema) do
                   Domain.cpu_relax ()
                 done;
-                List.iter (fun i -> ignore @@ delete i t) l)
+                List.iter (fun i -> ignore @@ remove i t) l)
           in
           let d2 =
             Domain.spawn (fun () ->
                 Semaphore.Binary.release sema;
-                List.iter (fun i -> ignore @@ delete i t) l')
+                List.iter (fun i -> ignore @@ remove i t) l')
           in
           let () = Domain.join d1 in
           let () = Domain.join d2 in
 
           List.for_all (fun elt -> not (mem elt t)) (l @ l')
           && List.for_all (fun elt -> mem elt t) (exclusion l'' (l @ l')));
-      Test.make ~name:"insert_delete" ~count:1000 small_nat (fun n ->
+      Test.make ~name:"insert_remove" ~count:1000 small_nat (fun n ->
           let open Llist in
           let t = init () in
           let sema = Semaphore.Binary.make false in
@@ -142,20 +142,20 @@ let tests_two_domains =
                 while not (Semaphore.Binary.try_acquire sema) do
                   Domain.cpu_relax ()
                 done;
-                List.map (fun i -> delete i t) l)
+                List.map (fun i -> remove i t) l)
           in
           let d2 =
             Domain.spawn (fun () ->
                 Semaphore.Binary.release sema;
                 List.map (fun i -> insert i t) l)
           in
-          let delete = Domain.join d1 in
+          let remove = Domain.join d1 in
           let _insert = Domain.join d2 in
 
           List.for_all2
-            (fun has_been_deleted k ->
-              if has_been_deleted then not (mem k t) else mem k t)
-            delete l);
+            (fun has_been_removed k ->
+              if has_been_removed then not (mem k t) else mem k t)
+            remove l);
     ]
 
 let main () =

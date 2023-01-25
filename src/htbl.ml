@@ -76,7 +76,7 @@ module Llist = struct
 
   let insert (key : 'a) (t : 'a t) = fst (unsafe_insert t.compare key t.t)
 
-  let unsafe_delete compare (key : 'a) t =
+  let unsafe_remove compare (key : 'a) t =
     let rec loop () =
       let is_found, local = find compare key t in
       if not is_found then (false, local)
@@ -94,7 +94,7 @@ module Llist = struct
     in
     loop ()
 
-  let delete (key : 'a) (t : 'a t) = fst (unsafe_delete t.compare key t.t)
+  let remove (key : 'a) (t : 'a t) = fst (unsafe_remove t.compare key t.t)
 
   let mem key t =
     let is_found, _ = find t.compare key t.t in
@@ -148,6 +148,8 @@ module Htbl = struct
       max = 3;
     }
 
+  let is_empty t = Atomic.get t.count = 0
+
   (** unset most significant turn on bit *)
   let get_parent id =
     let a = id lor (id lsr 1) in
@@ -172,6 +174,8 @@ module Htbl = struct
     | _, _ -> ());
     bucket
 
+  exception Full
+
   let insert id value t =
     let bucket = get_bucket id t in
 
@@ -184,7 +188,7 @@ module Htbl = struct
       (* to change when resizable hash table*)
       let prev_count = Atomic.get t.count in
       Atomic.incr t.count;
-      if prev_count + 1 > Atomic.get t.size * t.max then failwith "too big.";
+      if prev_count + 1 > Atomic.get t.size * t.max then raise Full;
       true
 
   let find id t =
@@ -203,13 +207,13 @@ module Htbl = struct
     let is_found, _ = Llist.find compare (key, Dummy) t.buckets.(bucket) in
     is_found
 
-  let delete id t =
+  let remove id t =
     let bucket = get_bucket id t in
     let key = compute_hkey id in
-    let is_deleted, _ =
-      Llist.unsafe_delete compare (key, Dummy) t.buckets.(bucket)
+    let is_removed, _ =
+      Llist.unsafe_remove compare (key, Dummy) t.buckets.(bucket)
     in
-    if not is_deleted then false
+    if not is_removed then false
     else (
       Atomic.decr t.count;
       true)
