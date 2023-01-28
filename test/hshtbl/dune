@@ -9,6 +9,13 @@
  (modules qcheck_htbl))
 
 (test
+ (name stm_llist)
+ (modules stm_llist)
+ (libraries lockfree qcheck-stm.sequential qcheck-stm.domain)
+ (action
+  (run %{test} --verbose)))
+
+(test
  (name stm_htbl)
  (modules stm_htbl)
  (libraries lockfree qcheck-stm.sequential qcheck-stm.domain)
