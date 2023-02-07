@@ -104,78 +104,36 @@ module Llist = struct
     is_found
 end
 
-(* Key value used in the linked list are computed with [reverse] for the
-   dummy node and with [compute_hkey] for the regular node.
+module Common = struct
+  (* Key value used in the linked list are computed with [reverse] for the
+        dummy node and with [compute_hkey] for the regular node.
 
-Example of a linked list, written in base 2, simplified to 8 bits
-integer. Only key are written, as values of regular nodes do not
-change the linked list order.
+     Example of a linked list, written in base 2, simplified to 8 bits
+     integer. Only key are written, as values of regular nodes do not
+     change the linked list order.
 
- [ 0000 0000 (0, dummy) ]
--> [ 0001 0001 (8, regular)]
--> [ 0100 0000 (2, dummy)]
--> [ 0101 0001 (10, regular)]
--> [ 0110 1001 (22, regular)]
--> [ 1000 0000 (1, dummy)]
--> [ 1000 1001 (17, regular)]
--> [ 1100 0000 (3, dummy)]
-*)
-let reverse x =
-  let x = x land 0xff_ff_ff_ff in
-  let x = ((x land 0xaa_aa_aa_aa) lsr 1) lor ((x land 0x55_55_55_55) lsl 1) in
-  let x = ((x land 0xcc_cc_cc_cc) lsr 2) lor ((x land 0x33_33_33_33) lsl 2) in
-  let x = ((x land 0xf0_f0_f0_f0) lsr 4) lor ((x land 0x0f_0f_0f_0f) lsl 4) in
-  let x = ((x land 0xff_00_ff_00) lsr 8) lor ((x land 0x00_ff_00_ff) lsl 8) in
-  (x lsr 16) lor (x lsl 16) land 0xffffffff
+      [ 0000 0000 (0, dummy) ]
+     -> [ 0001 0001 (8, regular)]
+     -> [ 0100 0000 (2, dummy)]
+     -> [ 0101 0001 (10, regular)]
+     -> [ 0110 1001 (22, regular)]
+     -> [ 1000 0000 (1, dummy)]
+     -> [ 1000 1001 (17, regular)]
+     -> [ 1100 0000 (3, dummy)]
+  *)
+  let reverse x =
+    (* works for int32 *)
+    let x = x land 0xff_ff_ff_ff in
+    let x = ((x land 0xaa_aa_aa_aa) lsr 1) lor ((x land 0x55_55_55_55) lsl 1) in
+    let x = ((x land 0xcc_cc_cc_cc) lsr 2) lor ((x land 0x33_33_33_33) lsl 2) in
+    let x = ((x land 0xf0_f0_f0_f0) lsr 4) lor ((x land 0x0f_0f_0f_0f) lsl 4) in
+    let x = ((x land 0xff_00_ff_00) lsr 8) lor ((x land 0x00_ff_00_ff) lsl 8) in
+    (x lsr 16) lor (x lsl 16) land 0xffffffff
 
-let compute_hkey k = reverse k lor 0x00_00_00_01
+  let compute_hkey k = reverse k lor 0x00_00_00_01
 
-module Htbl = struct
-  type 'b kind = Dummy | Regular of 'b
-  type key = int
-
-  type 'a t = {
-    (* total item count *)
-    count : int Atomic.t;
-    (* current number of buckets *)
-    size : int Atomic.t;
-    (* maximum number of items in a bucket (on average).  Maximun
-       number of elements in an hash table [t] is [t.sizes] * [t.max] *)
-    max : int;
-    (* pointers to the linked list *)
-    buckets : (key * 'a kind) Llist.marked_ptr Atomic.t array;
-  }
-
-  let compare (a, _) (b, _) = Stdlib.compare a b
-
-  let new_dummy_node id llist =
-    let new_key = reverse id in
-    let dummy_node = (new_key, Dummy) in
-    let is_inserted, local = Llist.unsafe_insert compare dummy_node llist in
-
-    if not is_inserted then
-      (* that means an another domain has
-         already inserted it *)
-      (* is this necessary ? *)
-      let (_, local) : bool * 'a Llist.local =
-        Llist.find compare (new_key, Dummy) llist
-      in
-      local.prev
-    else local.prev
-
-  let init size =
-    let llist = Llist.init ~compare () in
-    {
-      count = Atomic.make 0;
-      size = Atomic.make size;
-      buckets = Array.init size (fun key -> new_dummy_node key llist.t);
-      max = 3;
-    }
-
-  let is_empty t = Atomic.get t.count = 0
-
-  (** unset most significant turn on bit *)
-  let get_parent key =
+  (** unset most significant turn on bit (for int32) *)
+  let unset_msb key =
     let a = key lor (key lsr 1) in
     let a = a lor (a lsr 2) in
     let a = a lor (a lsr 4) in
@@ -183,69 +141,226 @@ module Htbl = struct
     let a = a lor (a lsr 16) in
     (a lsr 1) land key
 
-  (** [init_bucket t ind] inits a bucket and all its parents if needed *)
-  let rec init_bucket t ind =
-    let parent_ind = get_parent ind in
-    (match Atomic.get t.buckets.(parent_ind) with
-    | _, None -> init_bucket t parent_ind
-    | _ -> ());
-    let new_node = new_dummy_node ind t.buckets.(parent_ind) in
-    t.buckets.(ind) <- new_node
+  let compare (a, _) (b, _) = Stdlib.compare a b
 
-  (** [get_bucket_id key t] searches the bucket's index corresponding
+  type 'b kind = Dummy | Regular of 'b
+  type key = int
+
+  let new_dummy_node id llist =
+    let new_key = reverse id in
+    let dummy_node = (new_key, Dummy) in
+    let _, local = Llist.unsafe_insert compare dummy_node llist in
+    (* If the insertion succeeded ([is_inserted] = true) then [local.prev] contains the
+       atomic value of the new node.
+       If it failed that means another domain has inserted it. In this case,
+       [local.curr] also contains the value we seek as the [Llist.find] function
+       calls by [Llist.unsafe_insert] will have stopped at the right place. *)
+    Atomic.get local.prev
+end
+
+module Htbl = struct
+  open Common
+
+  type 'a t = {
+    (* current number of buckets (minus 1) *)
+    mask : int;
+    (* pointers to the linked list *)
+    buckets : (key * 'a kind) Llist.marked_ptr Atomic.t array;
+  }
+
+  let init ~size_exponent =
+    let size = Int.shift_left 1 size_exponent in
+    let mask = size - 1 in
+    let llist = Llist.init ~compare () in
+    {
+      mask;
+      buckets =
+        Array.init size (fun key -> Atomic.make (new_dummy_node key llist.t));
+    }
+
+  (** [init_bucket buckets ind] inits a bucket and all its parents if needed *)
+  let rec init_bucket buckets ind =
+    let parent_ind = unset_msb ind in
+    let parent_bucket = buckets.(parent_ind) in
+    (* initialize parents recursively if needeed *)
+    (if parent_ind <> ind then
+     match Atomic.get parent_bucket with
+     | _, None -> init_bucket buckets parent_ind
+     | _ -> ());
+
+    (* initialize current node *)
+    let new_node = new_dummy_node ind parent_bucket in
+    (* would Atomic.CAS be better ? *)
+    Atomic.set buckets.(ind) new_node
+
+  (** [get_bucket_id key buckets mask] searches the bucket's index corresponding
       to [key] (= [key mod t.size]), initializes if needed and returns
       it. *)
-  let get_bucket_ind key t =
-    let ind = key land (Atomic.get t.size - 1) in
-    (match Atomic.get t.buckets.(ind) with
-    | _, None -> init_bucket t ind
+  let get_bucket_ind key buckets mask =
+    let ind = key land mask in
+    (match Atomic.get buckets.(ind) with
+    | _, None -> init_bucket buckets ind
     | _, _ -> ());
     ind
 
-  exception Full
+  (** [insert key value t] *)
+  let insert key value { buckets; mask; _ } =
+    let bucket_ind = get_bucket_ind key buckets mask in
+    let new_node = (compute_hkey key, Regular value) in
+
+    let is_inserted, _local =
+      Llist.unsafe_insert compare new_node buckets.(bucket_ind)
+    in
+    is_inserted
+
+  let find key { buckets; mask; _ } =
+    let bucket = get_bucket_ind key buckets mask in
+    let key = compute_hkey key in
+    let is_found, local = Llist.find compare (key, Dummy) buckets.(bucket) in
+    if not is_found then None
+    else
+      match local.curr with
+      | _, Some { key = _, Regular k; _ } -> Some k
+      | _, _ -> failwith "Should not happen"
+
+  let mem key { buckets; mask; _ } =
+    let bucket = get_bucket_ind key buckets mask in
+    let key = compute_hkey key in
+    let is_found, _ = Llist.find compare (key, Dummy) buckets.(bucket) in
+    is_found
+
+  let remove key { buckets; mask; _ } =
+    let bucket = get_bucket_ind key buckets mask in
+    let key = compute_hkey key in
+    let is_removed, _ =
+      Llist.unsafe_remove compare (key, Dummy) buckets.(bucket)
+    in
+    is_removed
+end
+
+module Htbl_resizable = struct
+  open Common
+
+  (* pointers to a node in linked list *)
+  type 'a bucket = (key * 'a kind) Llist.marked_ptr Atomic.t
+  type 'a segment = 'a bucket array
+
+  type 'a t = {
+    (* total item count *)
+    count : int Atomic.t;
+    (* current number of buckets (minus 1) *)
+    size : int Atomic.t;
+    (* maximum number of items in a bucket (on average).  Maximun
+       number of elements in an hash table [t] is [t.sizes] * [t.max] *)
+    max : int;
+    segments : 'a segment option Atomic.t array;
+    size_max : int;
+    segment_size : int;
+  }
+
+  let init ~size_exponent =
+    let segment_size = Int.shift_left 1 size_exponent in
+    let llist = Llist.init ~compare () in
+    let grow_exp = 10 in
+    let exp_max = grow_exp + size_exponent in
+    let size_max = Int.shift_left 1 exp_max in
+    let first_seg =
+      Array.init segment_size (fun j -> Atomic.make (new_dummy_node j llist.t))
+    in
+    let segments =
+      Array.init (Int.shift_left 1 grow_exp) (fun i ->
+          match i with
+          | 0 -> Atomic.make (Some first_seg)
+          | _ -> Atomic.make None)
+    in
+    {
+      count = Atomic.make 0;
+      size = Atomic.make segment_size;
+      segment_size;
+      size_max;
+      segments;
+      max = 3;
+    }
+
+  let is_empty { count; _ } = Atomic.get count = 0
+
+  let get_segment t segment_ind =
+    let seg = t.segments.(segment_ind) in
+    match Atomic.get seg with
+    | Some seg -> seg
+    | None ->
+        (* create a new segment *)
+        let new_segment =
+          Array.init t.segment_size (fun _ -> Atomic.make (false, None))
+        in
+        (* initialize (can failed if another domain has already done it) *)
+        Atomic.compare_and_set seg None (Some new_segment) |> ignore;
+        (* should never fail *)
+        Option.get (Atomic.get seg)
+
+  let get_bucket_ref t ind =
+    let segment_ind = ind / t.segment_size in
+    let segment = get_segment t segment_ind in
+    segment.(ind land (t.segment_size - 1))
+
+  (** [init_bucket buckets ind] inits a bucket and all its parents if needed *)
+  let rec init_bucket t bucket bucket_ind =
+    (* get parent index *)
+    let parent_ind = unset_msb bucket_ind in
+    let parent_bucket = get_bucket_ref t parent_ind in
+    (* initialize parents recursively if necessary *)
+    (if parent_ind <> bucket_ind then
+     match Atomic.get parent_bucket with
+     | _, None -> init_bucket t parent_bucket parent_ind
+     | _, Some _ -> ());
+
+    (* initialize current node *)
+    let new_node = new_dummy_node bucket_ind parent_bucket in
+    Atomic.set bucket new_node
+
+  let get_bucket key t =
+    let mask_val = Atomic.get t.size - 1 in
+    let bucket_ind = key land mask_val in
+    let bucket = get_bucket_ref t bucket_ind in
+    match Atomic.get bucket with
+    | _, Some _ -> bucket
+    | _, None ->
+        init_bucket t bucket bucket_ind;
+        bucket
+
+  let rec grow t count =
+    let size_val = Atomic.get t.size in
+    if count > size_val * t.max && size_val <= t.size_max then
+      let new_size = size_val * 2 in
+      if Atomic.compare_and_set t.size size_val new_size then ()
+      else grow t count
 
   (** [insert key value t] *)
   let insert key value t =
-    (* get closest prev cells in the linked list*)
-    let bucket_ind = get_bucket_ind key t in
+    let bucket = get_bucket key t in
     let new_node = (compute_hkey key, Regular value) in
 
-    let is_inserted, _local =
-      Llist.unsafe_insert compare new_node t.buckets.(bucket_ind)
-    in
+    let is_inserted, _local = Llist.unsafe_insert compare new_node bucket in
     if not is_inserted then false
     else
-      (* to change when resizable hash table*)
       let prev_count = Atomic.fetch_and_add t.count 1 in
-
-      (* This is not a "true" max size : the hash table can actually
-         havea maximum of (t.size * t.max + #_domains - 1) elements as
-         all domains could insert once after the limit (t.size * t.max -
-         1) is reached.
-
-         However the maximum number of elements is defined based on an
-         average maximum number of elements by buckets (t.max) and so it
-         can be exceed a bit without bad consequences. *)
-      if prev_count + 1 > Atomic.get t.size * t.max then raise Full;
+      grow t prev_count;
       true
 
   let insert_no_resize key value t =
-    (* get closest prev cells in the linked list*)
-    let bucket_ind = get_bucket_ind key t in
+    let bucket = get_bucket key t in
     let new_node = (compute_hkey key, Regular value) in
 
-    let is_inserted, _local =
-      Llist.unsafe_insert compare new_node t.buckets.(bucket_ind)
-    in
+    let is_inserted, _local = Llist.unsafe_insert compare new_node bucket in
     if not is_inserted then false
     else (
       Atomic.incr t.count;
       true)
 
   let find key t =
-    let bucket = get_bucket_ind key t in
+    let bucket = get_bucket key t in
     let key = compute_hkey key in
-    let is_found, local = Llist.find compare (key, Dummy) t.buckets.(bucket) in
+    let is_found, local = Llist.find compare (key, Dummy) bucket in
     if not is_found then None
     else
       match local.curr with
@@ -253,17 +368,15 @@ module Htbl = struct
       | _, _ -> failwith "Should not happen"
 
   let mem key t =
-    let bucket = get_bucket_ind key t in
+    let bucket = get_bucket key t in
     let key = compute_hkey key in
-    let is_found, _ = Llist.find compare (key, Dummy) t.buckets.(bucket) in
+    let is_found, _ = Llist.find compare (key, Dummy) bucket in
     is_found
 
   let remove key t =
-    let bucket = get_bucket_ind key t in
+    let bucket = get_bucket key t in
     let key = compute_hkey key in
-    let is_removed, _ =
-      Llist.unsafe_remove compare (key, Dummy) t.buckets.(bucket)
-    in
+    let is_removed, _ = Llist.unsafe_remove compare (key, Dummy) bucket in
     if not is_removed then false
     else (
       Atomic.decr t.count;

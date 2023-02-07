@@ -1,3 +1,11 @@
+(rule
+ (copy ../../src/htbl.ml htbl.ml))
+
+(test
+ (name htbl_dscheck)
+ (libraries atomic dscheck alcotest)
+ (modules htbl htbl_dscheck))
+
 (test
  (name qcheck_llist)
  (libraries lockfree qcheck qcheck-alcotest)

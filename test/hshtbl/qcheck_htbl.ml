@@ -34,9 +34,8 @@ let tests_one_domain =
       (* Add a list of unique elements in a linked list. All
          insertion should success. *)
       Test.make ~name:"seq_insert" nat_int_list (fun l ->
-          assume (List.length l <= 64);
           let open Htbl in
-          let t = init 64 in
+          let t = init ~size_exponent:10 in
           let l = List.sort_uniq (fun (a, _) (b, _) -> compare a b) l in
           List.for_all (fun (k, v) -> insert k v t) l);
       (* Add a list of elements in a linked list and checks :
@@ -47,9 +46,8 @@ let tests_one_domain =
          - [mem] on all added elements returns [true].
       *)
       Test.make ~name:"seq_insert_mem" nat_int_list (fun l ->
-          assume (List.length l <= 64);
           let open Htbl in
-          let t = init 64 in
+          let t = init ~size_exponent:10 in
 
           let has_been_added = List.map (fun (k, v) -> insert k v t) l in
 
@@ -70,30 +68,26 @@ let tests_one_domain =
       (* Add a list of elements and then remove then. Tested properties are :
          - added and removed elements are the same
          - mem on all elements return false
-         - is_empty returns true
       *)
       Test.make ~name:"seq_remove" nat_int_list (fun l ->
-          assume (List.length l <= 64);
           let open Htbl in
-          let t = init 64 in
+          let t = init ~size_exponent:10 in
 
           let has_been_added = List.map (fun (k, v) -> insert k v t) l in
           let has_been_removed = List.map (fun (k, _) -> remove k t) l in
 
           (* Tested properties *)
           has_been_added = has_been_removed
-          && List.for_all (fun (k, _) -> not (mem k t)) l
-          && is_empty t);
+          && List.for_all (fun (k, _) -> not (mem k t)) l);
       (* Add a list of elements and then search random keys.
          This test checks that
          forall k, l,  List.assoc_opt k l = Htbl.find k t
-         where t = List.iter (fun (k, v) -> Htbl.insert k v t |> ignore) l (Htbl.init n)
+         where t = List.iter (fun (k, v) -> Htbl.insert k v t |> ignore) l (Htbl.init ~size_exponent:n)
       *)
       Test.make ~name:"seq_find" (pair nat_int_list nat_list)
         (fun (to_add, to_search_for) ->
-          assume (List.length to_add <= 64);
           let open Htbl in
-          let t = init 64 in
+          let t = init ~size_exponent:10 in
 
           List.iter (fun (k, v) -> insert k v t |> ignore) to_add;
           let found = List.map (fun k -> find k t) to_search_for in
@@ -105,9 +99,8 @@ let tests_one_domain =
       (* Add a list of elements and then search for then.
       *)
       Test.make ~name:"seq_find2" nat_int_list (fun l ->
-          assume (List.length l <= 64);
           let open Htbl in
-          let t = init 64 in
+          let t = init ~size_exponent:10 in
 
           let has_been_added = List.map (fun (k, v) -> insert k v t) l in
           let should_be_found = List.map (fun (k, _) -> find k t) l in
@@ -136,9 +129,8 @@ let tests_two_domain =
       Test.make ~name:"par_insert" (pair nat_int_list nat_int_list)
         (fun (l1, l2) ->
           let l1, l2 = remove_dup_keys l1 l2 in
-          assume (List.length l1 <= 64 && List.length l2 <= 64);
           let open Htbl in
-          let t = init 128 in
+          let t = init ~size_exponent:10 in
           let sema = Semaphore.Binary.make false in
 
           let domain2 =

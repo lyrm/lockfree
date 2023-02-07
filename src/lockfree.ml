@@ -34,3 +34,4 @@ module Backoff = Backoff
 module Mpmc_relaxed_queue = Mpmc_relaxed_queue
 module Linked_list = Htbl.Llist
 module Hshtbl = Htbl.Htbl
+module Hshtbl_resizable = Htbl.Htbl_resizable
