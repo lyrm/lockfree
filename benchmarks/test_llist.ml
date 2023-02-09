@@ -31,7 +31,7 @@ module Sllist : sig
 
   val init : unit -> 'a t
   val mem : 'a -> 'a t -> bool
-  val insert : 'a -> 'a t -> 'a t
+  val add : 'a -> 'a t -> 'a t
 
   (*  val delete : 'a -> 'a t -> 'a t*)
 end = struct
@@ -46,7 +46,7 @@ end = struct
     in
     loop l
 
-  let insert key l =
+  let add key l =
     let rec loop = function
       | Empty -> Node (key, Empty)
       | Node (x, xs) ->
@@ -73,10 +73,10 @@ let random_list ?(max = 100) n =
   done;
   arr |> Array.to_list
 
-(** [test_insert_par n ls] makes n domains [insert] the n lists
+(** [test_add_par n ls] makes n domains [add] the n lists
    contained in [ls] in parallel. It checks with [find] that all
    unique elements of all lists in [ls] are in the resulting list. *)
-let test_insert_par (ls, unique_elts) =
+let test_add_par (ls, unique_elts) =
   let t = Llist.init () in
   let sema = Semaphore.Counting.make (Array.length ls) in
 
@@ -85,44 +85,44 @@ let test_insert_par (ls, unique_elts) =
     while Semaphore.Counting.get_value sema <> 0 do
       Domain.cpu_relax ()
     done;
-    List.iter (fun elt -> Llist.insert elt t |> ignore) l
+    List.iter (fun elt -> Llist.add elt t |> ignore) l
   in
   let domains = Array.map (fun l -> Domain.spawn (fun () -> work l)) ls in
   Array.iter Domain.join domains;
 
   let res = List.for_all (fun elt -> Llist.mem elt t) unique_elts in
-  if not res then failwith "error insert par"
+  if not res then failwith "error add par"
 
-(** [test_insert_seq] does the same as [test_insert_par] but with only
-   one domains, inserting the lists sequentially. *)
-let test_insert_seq (ls, unique_elts) =
+(** [test_add_seq] does the same as [test_add_par] but with only
+   one domains, adding the lists sequentially. *)
+let test_add_seq (ls, unique_elts) =
   let t = Llist.init () in
   Array.iter
     (fun l ->
       Domain.spawn (fun () ->
-          List.iter (fun elt -> Llist.insert elt t |> ignore) l)
+          List.iter (fun elt -> Llist.add elt t |> ignore) l)
       |> Domain.join)
     ls;
   let res = List.for_all (fun elt -> Llist.mem elt t) unique_elts in
-  if not res then failwith "error insert seq"
+  if not res then failwith "error add seq"
 
-(** [test_insert_sslist] does the same as [test_insert_seq] but with
+(** [test_add_sslist] does the same as [test_add_seq] but with
    the [Sllist] implementation of a sorted linked list. *)
-let test_insert_sllist (ls, unique_elts) =
+let test_add_sllist (ls, unique_elts) =
   let t = Sllist.init () in
   let t =
     Array.fold_left
       (fun t l ->
         Domain.spawn (fun () ->
-            List.fold_left (fun t elt -> Sllist.insert elt t) t l)
+            List.fold_left (fun t elt -> Sllist.add elt t) t l)
         |> Domain.join)
       t ls
   in
 
   let res = List.for_all (fun elt -> Sllist.mem elt t) unique_elts in
-  if not res then failwith "error insert sllist"
+  if not res then failwith "error add sllist"
 
-let test_insert () =
+let test_add () =
   (*
  Parameters : every test is run 100 (ntest) times. For each tests
  (1000 (nsize) x ndomains) elements are inserted. The elements are
@@ -164,13 +164,13 @@ let test_insert () =
     ndomains nsize list_size (List.length unique_elts) (max - 1);
   let ls_uni = (ls, unique_elts) in
 
-  let test_insert_sllist () = test_insert_sllist ls_uni in
-  let test_insert_seq () = test_insert_seq ls_uni in
-  let test_insert_par () = test_insert_par ls_uni in
+  let test_add_sllist () = test_add_sllist ls_uni in
+  let test_add_seq () = test_add_seq ls_uni in
+  let test_add_par () = test_add_par ls_uni in
 
-  let tpar = measure_and_launch_n_tests ntest test_insert_seq in
-  let tseq = measure_and_launch_n_tests ntest test_insert_par in
-  let tseq2 = measure_and_launch_n_tests ntest test_insert_sllist in
+  let tpar = measure_and_launch_n_tests ntest test_add_seq in
+  let tseq = measure_and_launch_n_tests ntest test_add_par in
+  let tseq2 = measure_and_launch_n_tests ntest test_add_sllist in
 
   Format.printf
     "**Results:**\nSllist: %.3f seconds\nSeq: %.3f seconds\nPar: %.3f seconds\n"
@@ -188,7 +188,7 @@ let simple_test () =
   let test l =
     let d =
       Domain.spawn (fun () ->
-          List.iter (fun elt -> Llist.insert elt t |> ignore) l;
+          List.iter (fun elt -> Llist.add elt t |> ignore) l;
           List.iter (fun elt -> Llist.delete elt t |> ignore) l;
           Llist.clean_local t)
     in
@@ -200,4 +200,4 @@ let simple_test () =
   measure_and_launch_n_tests ntest (fun () -> test l) |> ignore;
   Format.printf "**END.**@."
 *)
-let _ = test_insert ()
+let _ = test_add ()

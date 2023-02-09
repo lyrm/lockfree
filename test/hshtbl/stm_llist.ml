@@ -3,11 +3,11 @@ open STM
 module Llist = Lockfree.Linked_list
 
 module WSDConf = struct
-  type cmd = Insert of int | Remove of int | Mem of int
+  type cmd = Add of int | Remove of int | Mem of int
 
   let show_cmd c =
     match c with
-    | Insert k -> "Insert " ^ string_of_int k
+    | Add k -> "Add " ^ string_of_int k
     | Remove k -> "Remove " ^ string_of_int k
     | Mem k -> "Mem " ^ string_of_int k
 
@@ -25,7 +25,7 @@ module WSDConf = struct
     QCheck.make ~print:show_cmd
       (Gen.oneof
          [
-           Gen.map (fun k -> Insert k) int_gen;
+           Gen.map (fun k -> Add k) int_gen;
            Gen.map (fun i -> Remove i) int_gen;
            Gen.map (fun i -> Mem i) int_gen;
          ])
@@ -36,7 +36,7 @@ module WSDConf = struct
 
   let next_state c s =
     match c with
-    | Insert k -> if S.mem k s then s else S.add k s
+    | Add k -> if S.mem k s then s else S.add k s
     | Mem _ -> s
     | Remove k -> if S.mem k s then S.remove k s else s
 
@@ -44,13 +44,13 @@ module WSDConf = struct
 
   let run c t =
     match c with
-    | Insert k -> Res (bool, Llist.insert k t)
+    | Add k -> Res (bool, Llist.add k t)
     | Remove k -> Res (bool, Llist.remove k t)
     | Mem k -> Res (bool, Llist.mem k t)
 
   let postcond c (s : state) res =
     match (c, res) with
-    | Insert k, Res ((Bool, _), res) -> S.mem k s = not res
+    | Add k, Res ((Bool, _), res) -> S.mem k s = not res
     | Mem k, Res ((Bool, _), res) -> S.mem k s = res
     | Remove k, Res ((Bool, _), res) -> S.mem k s = res
     | _, _ -> false

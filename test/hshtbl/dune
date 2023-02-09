@@ -29,3 +29,10 @@
  (libraries lockfree qcheck-stm.sequential qcheck-stm.domain)
  (action
   (run %{test} --verbose)))
+
+(test
+ (name stm_htbl_resizable)
+ (modules stm_htbl_resizable)
+ (libraries lockfree qcheck-stm.sequential qcheck-stm.domain)
+ (action
+  (run %{test} --verbose)))

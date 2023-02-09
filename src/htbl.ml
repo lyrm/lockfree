@@ -61,7 +61,7 @@ module Llist = struct
     let res = try_again () in
     res
 
-  let unsafe_insert compare (key : 'a) t : bool * 'a local =
+  let unsafe_add compare (key : 'a) t : bool * 'a local =
     let rec loop () =
       let is_found, local = find compare key t in
       if is_found then (* key already in the list *)
@@ -77,7 +77,7 @@ module Llist = struct
     in
     loop ()
 
-  let insert (key : 'a) (t : 'a t) = fst (unsafe_insert t.compare key t.t)
+  let add (key : 'a) (t : 'a t) = fst (unsafe_add t.compare key t.t)
 
   let unsafe_remove compare (key : 'a) t =
     let rec loop () =
@@ -149,12 +149,12 @@ module Common = struct
   let new_dummy_node id llist =
     let new_key = reverse id in
     let dummy_node = (new_key, Dummy) in
-    let _, local = Llist.unsafe_insert compare dummy_node llist in
-    (* If the insertion succeeded ([is_inserted] = true) then [local.prev] contains the
+    let _, local = Llist.unsafe_add compare dummy_node llist in
+    (* If the insertion succeeded ([is_added] = true) then [local.prev] contains the
        atomic value of the new node.
        If it failed that means another domain has inserted it. In this case,
        [local.curr] also contains the value we seek as the [Llist.find] function
-       calls by [Llist.unsafe_insert] will have stopped at the right place. *)
+       calls by [Llist.unsafe_add] will have stopped at the right place. *)
     Atomic.get local.prev
 end
 
@@ -203,15 +203,15 @@ module Htbl = struct
     | _, _ -> ());
     ind
 
-  (** [insert key value t] *)
-  let insert key value { buckets; mask; _ } =
+  (** [add key value t] *)
+  let add key value { buckets; mask; _ } =
     let bucket_ind = get_bucket_ind key buckets mask in
     let new_node = (compute_hkey key, Regular value) in
 
-    let is_inserted, _local =
-      Llist.unsafe_insert compare new_node buckets.(bucket_ind)
+    let is_added, _local =
+      Llist.unsafe_add compare new_node buckets.(bucket_ind)
     in
-    is_inserted
+    is_added
 
   let find key { buckets; mask; _ } =
     let bucket = get_bucket_ind key buckets mask in
@@ -279,7 +279,7 @@ module Htbl_resizable = struct
       segment_size;
       size_max;
       segments;
-      max = 3;
+      max = 2;
     }
 
   let is_empty { count; _ } = Atomic.get count = 0
@@ -335,24 +335,24 @@ module Htbl_resizable = struct
       if Atomic.compare_and_set t.size size_val new_size then ()
       else grow t count
 
-  (** [insert key value t] *)
-  let insert key value t =
+  (** [add key value t] *)
+  let add key value t =
     let bucket = get_bucket key t in
     let new_node = (compute_hkey key, Regular value) in
 
-    let is_inserted, _local = Llist.unsafe_insert compare new_node bucket in
-    if not is_inserted then false
+    let is_added, _local = Llist.unsafe_add compare new_node bucket in
+    if not is_added then false
     else
       let prev_count = Atomic.fetch_and_add t.count 1 in
       grow t prev_count;
       true
 
-  let insert_no_resize key value t =
+  let add_no_resize key value t =
     let bucket = get_bucket key t in
     let new_node = (compute_hkey key, Regular value) in
 
-    let is_inserted, _local = Llist.unsafe_insert compare new_node bucket in
-    if not is_inserted then false
+    let is_added, _local = Llist.unsafe_add compare new_node bucket in
+    if not is_added then false
     else (
       Atomic.incr t.count;
       true)

@@ -3,12 +3,12 @@ open STM
 module Htbl = Lockfree.Hshtbl
 
 module WSDConf = struct
-  type cmd = Insert of int * int | Remove of int | Find of int | Mem of int
+  type cmd = Add of int * int | Remove of int | Find of int | Mem of int
 
   let show_cmd c =
     match c with
-    | Insert (k, v) ->
-        "Insert (" ^ string_of_int k ^ ", " ^ string_of_int v ^ ")"
+    | Add (k, v) ->
+        "Add (" ^ string_of_int k ^ ", " ^ string_of_int v ^ ")"
     | Remove k -> "Remove " ^ string_of_int k
     | Find k -> "Find " ^ string_of_int k
     | Mem k -> "Mem" ^ string_of_int k
@@ -27,7 +27,7 @@ module WSDConf = struct
     QCheck.make ~print:show_cmd
       (Gen.oneof
          [
-           Gen.map2 (fun k v -> Insert (k, v)) int_gen int_gen;
+           Gen.map2 (fun k v -> Add (k, v)) int_gen int_gen;
            Gen.map (fun i -> Remove i) int_gen;
            Gen.map (fun i -> Find i) int_gen;
            Gen.map (fun i -> Mem i) int_gen;
@@ -39,7 +39,7 @@ module WSDConf = struct
 
   let next_state c s =
     match c with
-    | Insert (k, v) -> if S.mem k s then s else S.add k v s
+    | Add (k, v) -> if S.mem k s then s else S.add k v s
     | Find _ -> s
     | Remove k -> if S.mem k s then S.remove k s else s
     | Mem _k -> s
@@ -48,14 +48,14 @@ module WSDConf = struct
 
   let run c t =
     match c with
-    | Insert (k, v) -> Res (bool, Htbl.insert k v t)
+    | Add (k, v) -> Res (bool, Htbl.add k v t)
     | Remove k -> Res (bool, Htbl.remove k t)
     | Find k -> Res (option int, Htbl.find k t)
     | Mem k -> Res (bool, Htbl.mem k t)
 
   let postcond c (s : state) res =
     match (c, res) with
-    | Insert (k, _), Res ((Bool, _), res) -> S.mem k s = not res
+    | Add (k, _), Res ((Bool, _), res) -> S.mem k s = not res
     | Find k, Res ((Option Int, _), res) -> S.find_opt k s = res
     | Remove k, Res ((Bool, _), res) -> S.mem k s = res
     | Mem k, Res ((Bool, _), res) -> S.mem k s = res

@@ -33,23 +33,23 @@ let tests_one_domain =
     [
       (* Add a list of unique elements in a linked list. All
          insertion should success. *)
-      Test.make ~name:"seq_insert" nat_int_list (fun l ->
+      Test.make ~name:"seq_add" nat_int_list (fun l ->
           let open Htbl in
           let t = init ~size_exponent:10 in
           let l = List.sort_uniq (fun (a, _) (b, _) -> compare a b) l in
-          List.for_all (fun (k, v) -> insert k v t) l);
+          List.for_all (fun (k, v) -> add k v t) l);
       (* Add a list of elements in a linked list and checks :
 
-         - the elements that have already been added, the [insert]
+         - the elements that have already been added, the [add]
          function returns [false] and [true] otherwise.
 
          - [mem] on all added elements returns [true].
       *)
-      Test.make ~name:"seq_insert_mem" nat_int_list (fun l ->
+      Test.make ~name:"seq_add_mem" nat_int_list (fun l ->
           let open Htbl in
           let t = init ~size_exponent:10 in
 
-          let has_been_added = List.map (fun (k, v) -> insert k v t) l in
+          let has_been_added = List.map (fun (k, v) -> add k v t) l in
 
           let rec loop prev l has_been_added =
             match (l, has_been_added) with
@@ -73,7 +73,7 @@ let tests_one_domain =
           let open Htbl in
           let t = init ~size_exponent:10 in
 
-          let has_been_added = List.map (fun (k, v) -> insert k v t) l in
+          let has_been_added = List.map (fun (k, v) -> add k v t) l in
           let has_been_removed = List.map (fun (k, _) -> remove k t) l in
 
           (* Tested properties *)
@@ -82,14 +82,14 @@ let tests_one_domain =
       (* Add a list of elements and then search random keys.
          This test checks that
          forall k, l,  List.assoc_opt k l = Htbl.find k t
-         where t = List.iter (fun (k, v) -> Htbl.insert k v t |> ignore) l (Htbl.init ~size_exponent:n)
+         where t = List.iter (fun (k, v) -> Htbl.add k v t |> ignore) l (Htbl.init ~size_exponent:n)
       *)
       Test.make ~name:"seq_find" (pair nat_int_list nat_list)
         (fun (to_add, to_search_for) ->
           let open Htbl in
           let t = init ~size_exponent:10 in
 
-          List.iter (fun (k, v) -> insert k v t |> ignore) to_add;
+          List.iter (fun (k, v) -> add k v t |> ignore) to_add;
           let found = List.map (fun k -> find k t) to_search_for in
 
           (* Tested properties *)
@@ -102,7 +102,7 @@ let tests_one_domain =
           let open Htbl in
           let t = init ~size_exponent:10 in
 
-          let has_been_added = List.map (fun (k, v) -> insert k v t) l in
+          let has_been_added = List.map (fun (k, v) -> add k v t) l in
           let should_be_found = List.map (fun (k, _) -> find k t) l in
           let res = List.combine has_been_added should_be_found in
 
@@ -126,7 +126,7 @@ let tests_two_domain =
       (* Two domains add elements that all have a different key. The
          tested properties is that no element is missing at the
          end. *)
-      Test.make ~name:"par_insert" (pair nat_int_list nat_int_list)
+      Test.make ~name:"par_add" (pair nat_int_list nat_int_list)
         (fun (l1, l2) ->
           let l1, l2 = remove_dup_keys l1 l2 in
           let open Htbl in
@@ -139,7 +139,7 @@ let tests_two_domain =
                 List.map
                   (fun (k, v) ->
                     Domain.cpu_relax ();
-                    insert k v t)
+                    add k v t)
                   l2)
           in
 
@@ -152,7 +152,7 @@ let tests_two_domain =
             List.map
               (fun (k, v) ->
                 Domain.cpu_relax ();
-                insert k v t)
+                add k v t)
               l1
           in
           let added_by_d2 = Domain.join domain2 in
