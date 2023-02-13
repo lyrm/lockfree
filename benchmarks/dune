@@ -2,3 +2,13 @@
  (name test_llist)
  (libraries lockfree unix)
  (modules test_llist))
+
+(executable
+ (name test_htbl)
+ (libraries lockfree unix)
+ (modules test_htbl))
+
+(executable
+ (name test_perf)
+ (libraries lockfree unix)
+ (modules test_perf))
