@@ -63,6 +63,8 @@ let () =
   let count = 500 in
   QCheck_base_runner.run_tests_main
     [
-      WSDT_seq.agree_test ~count ~name:"STM Lockfree.Linked_list test sequential";
-      WSDT_dom.agree_test_par ~count ~name:"STM Lockfree.Linked_list test parallel";
+      WSDT_seq.agree_test ~count
+        ~name:"STM Lockfree.Linked_list test sequential";
+      WSDT_dom.agree_test_par ~count
+        ~name:"STM Lockfree.Linked_list test parallel";
     ]

@@ -12,11 +12,10 @@ module WSDConf = struct
 
   let show_cmd c =
     match c with
-    | Add (k, v) ->
-        "Add (" ^ string_of_int k ^ ", " ^ string_of_int v ^ ")"
+    | Add (k, v) -> "Add (" ^ string_of_int k ^ ", " ^ string_of_int v ^ ")"
     | Remove k -> "Remove " ^ string_of_int k
     | Find k -> "Find " ^ string_of_int k
-    | Mem k -> "Mem" ^ string_of_int k
+    | Mem k -> "Mem " ^ string_of_int k
     | Is_empty -> "Is_empty"
 
   module S = Map.Make (struct
@@ -79,6 +78,8 @@ let () =
   let count = 500 in
   QCheck_base_runner.run_tests_main
     [
-      WSDT_seq.agree_test ~count ~name:"STM Lockfree.Htbl_resizable test sequential";
-      WSDT_dom.agree_test_par ~count ~name:"STM Lockfree.Htbl_resizable test parallel";
+      WSDT_seq.agree_test ~count
+        ~name:"STM Lockfree.Htbl_resizable test sequential";
+      WSDT_dom.agree_test_par ~count
+        ~name:"STM Lockfree.Htbl_resizable test parallel";
     ]

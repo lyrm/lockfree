@@ -7,8 +7,7 @@ module WSDConf = struct
 
   let show_cmd c =
     match c with
-    | Add (k, v) ->
-        "Add (" ^ string_of_int k ^ ", " ^ string_of_int v ^ ")"
+    | Add (k, v) -> "Add (" ^ string_of_int k ^ ", " ^ string_of_int v ^ ")"
     | Remove k -> "Remove " ^ string_of_int k
     | Find k -> "Find " ^ string_of_int k
     | Mem k -> "Mem" ^ string_of_int k
