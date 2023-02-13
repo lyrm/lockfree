@@ -1,10 +1,18 @@
 (rule
  (copy ../../src/htbl.ml htbl.ml))
 
+(rule
+ (copy ../../src/htbl.ml htbl_resizable.ml))
+
 (test
  (name htbl_dscheck)
  (libraries atomic dscheck alcotest)
  (modules htbl htbl_dscheck))
+
+(test
+ (name htbl_resizable_dscheck)
+ (libraries atomic dscheck alcotest)
+ (modules htbl_resizable htbl_resizable_dscheck))
 
 (test
  (name qcheck_llist)

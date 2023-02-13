@@ -1,10 +1,10 @@
-module Htbl = Htbl.Htbl
+module Htbl = Htbl_resizable.Htbl_resizable
 
 let two_producers () =
   Atomic.trace (fun () ->
-      let htbl = Htbl.init ~size_exponent:6 in
-      let items_by_domain = 4 in
-      let nb_domain = 3 in
+      let htbl = Htbl.init ~size_exponent:8 in
+      let items_by_domain = 2 in
+      let nb_domain = 2 in
 
       for i = 0 to nb_domain - 1 do
         Atomic.spawn (fun () ->
