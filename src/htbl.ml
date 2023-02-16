@@ -1,60 +1,70 @@
 module Llist = struct
-  type 'a marked_ptr = bool * 'a node option
+  type 'a marked_ptr = Last | LRemove | Normal of 'a node | Remove of 'a node
   and 'a t = { compare : 'a -> 'a -> int; t : 'a marked_ptr Atomic.t }
   and 'a node = { key : 'a; next : 'a marked_ptr Atomic.t }
 
   type 'a local = {
-    prev : (bool * 'a node option) Atomic.t;
-    curr : bool * 'a node option;
-    next : bool * 'a node option;
+    prev : 'a marked_ptr Atomic.t;
+    curr : 'a marked_ptr;
+    next : 'a marked_ptr;
   }
 
   let init ?(compare = Stdlib.compare) () : 'a t =
-    { compare; t = Atomic.make (false, None) }
+    { compare; t = Atomic.make Last }
+
+  let convert_to_normal = function
+    | (Last | Normal _) as node -> node
+    | LRemove -> Last
+    | Remove node -> Normal node
+
+  let mark_to_delete = function
+    | Last -> LRemove
+    | Normal node -> Remove node
+    | _ as x -> x
 
   (* Warning on find *)
   let find compare key t : bool * 'a local =
     let rec try_again () =
-      let local = { prev = t; curr = Atomic.get t; next = (false, None) } in
+      let local = { prev = t; curr = Atomic.get t; next = Last } in
       let rec loop local =
         match local.curr with
-        | _pmark, None -> (false, local)
-        | _pmark, Some { key = ckey; next = atomic_next } ->
+        | Last | LRemove -> (false, local)
+        | Normal { key = ckey; next = atomic_next }
+        | Remove { key = ckey; next = atomic_next } -> (
             let next = Atomic.get atomic_next in
             let local = { local with next } in
             if Atomic.get local.prev != local.curr then
               (* Another domain has changed the current node *)
               try_again ()
-            else if not (fst next) then
-              (* not a node that need to be deleted : we check if we got the right key *)
-              let comp = compare ckey key in
-              if comp >= 0 then (comp = 0, local)
-                (* if comp = 0, this is the right key, else that means
-                   the key is not here as the list is sorted *)
-              else
-                let local =
-                  { prev = atomic_next; curr = next; next = (false, None) }
-                in
-                loop local
-            else if
-              (* the current node has been marked for deletion
-                 -> we try to remove it now *)
-              Atomic.compare_and_set local.prev local.curr
-                (false, snd local.next)
-            then
-              (* it worked ! great, let's continue searching our key ! *)
-              let local =
-                {
-                  local with
-                  curr = (false, snd local.next);
-                  next = (false, None);
-                }
-              in
-              loop local
             else
-              (* Another domain removed the marked node before us, we
-                 need to begin again *)
-              try_again ()
+              match next with
+              | Normal _ | Last ->
+                  (* not a node that need to be deleted : we check if we got the right key *)
+                  let comp = compare ckey key in
+                  if comp >= 0 then (comp = 0, local)
+                    (* if comp = 0, this is the right key, else that means
+                       the key is not here as the list is sorted *)
+                  else
+                    let local =
+                      { prev = atomic_next; curr = next; next = Last }
+                    in
+                    loop local
+              | _ ->
+                  (* the current node has been marked for deletion
+                     -> we try to remove it now *)
+
+                  (* first we remove the "to_remove" flag for the next node *)
+                  let next = convert_to_normal local.next in
+
+                  (* then we try to insert here at the place of the remove node *)
+                  if Atomic.compare_and_set local.prev local.curr next then
+                    (* it worked ! great, let's continue searching our key ! *)
+                    let local = { local with curr = next; next = Last } in
+                    loop local
+                  else
+                    (* Another domain removed the marked node before us, we
+                       need to begin again *)
+                    try_again ())
       in
       loop local
     in
@@ -69,10 +79,9 @@ module Llist = struct
       else
         (* not in ! We can add it ! [t.curr] has been set up by [find] to
            be the next node : we have everything to create our new node. *)
-        let node = { key; next = Atomic.make local.curr } in
+        let node = Normal { key; next = Atomic.make local.curr } in
         (* let's try to add it! *)
-        if Atomic.compare_and_set local.prev local.curr (false, Some node) then
-          (true, local)
+        if Atomic.compare_and_set local.prev local.curr node then (true, local)
         else loop ()
     in
     loop ()
@@ -84,10 +93,15 @@ module Llist = struct
       let is_found, local = find compare key t in
       if not is_found then (false, local)
       else
-        let curr = local.curr |> snd |> Option.get in
+        let curr =
+          match local.curr with
+          | Normal node -> node
+          | _ -> failwith " Should never happen"
+        in
         if
           not
-            (Atomic.compare_and_set curr.next local.next (true, snd local.next))
+            (Atomic.compare_and_set curr.next local.next
+               (mark_to_delete local.next))
         then loop ()
         else if Atomic.compare_and_set local.prev local.curr local.next then
           (true, local)
@@ -105,6 +119,9 @@ module Llist = struct
 end
 
 module Common = struct
+  type 'b kind = Dummy | Regular of 'b
+  type key = int
+
   (* Key value used in the linked list are computed with [reverse] for the
         dummy node and with [compute_hkey] for the regular node.
 
@@ -142,9 +159,6 @@ module Common = struct
     (a lsr 1) land key
 
   let compare (a, _) (b, _) = Stdlib.compare a b
-
-  type 'b kind = Dummy | Regular of 'b
-  type key = int
 
   let new_dummy_node id llist =
     let new_key = reverse id in
@@ -185,7 +199,8 @@ module Htbl = struct
     (* initialize parents recursively if needeed *)
     (if parent_ind <> ind then
      match Atomic.get parent_bucket with
-     | _, None -> init_bucket buckets parent_ind
+     | Llist.Last -> init_bucket buckets parent_ind
+     | LRemove -> failwith "Should never happen."
      | _ -> ());
 
     (* initialize current node *)
@@ -199,8 +214,9 @@ module Htbl = struct
   let get_bucket_ind key buckets mask =
     let ind = key land mask in
     (match Atomic.get buckets.(ind) with
-    | _, None -> init_bucket buckets ind
-    | _, _ -> ());
+    | Llist.Last -> init_bucket buckets ind
+    | LRemove -> failwith "Should never happen."
+    | _ -> ());
     ind
 
   (** [add key value t] *)
@@ -220,8 +236,9 @@ module Htbl = struct
     if not is_found then None
     else
       match local.curr with
-      | _, Some { key = _, Regular k; _ } -> Some k
-      | _, _ -> failwith "Should not happen"
+      | Normal { key = _, Regular k; _ } | Remove { key = _, Regular k; _ } ->
+          Some k
+      | _ -> failwith "Should not happen"
 
   let mem key { buckets; mask; _ } =
     let bucket = get_bucket_ind key buckets mask in
@@ -291,7 +308,7 @@ module Htbl_resizable = struct
     | None ->
         (* create a new segment *)
         let new_segment =
-          Array.init t.segment_size (fun _ -> Atomic.make (false, None))
+          Array.init t.segment_size (fun _ -> Atomic.make Llist.Last)
         in
         (* initialize (can failed if another domain has already done it) *)
         Atomic.compare_and_set seg None (Some new_segment) |> ignore;
@@ -311,8 +328,9 @@ module Htbl_resizable = struct
     (* initialize parents recursively if necessary *)
     (if parent_ind <> bucket_ind then
      match Atomic.get parent_bucket with
-     | _, None -> init_bucket t parent_bucket parent_ind
-     | _, Some _ -> ());
+     | Llist.Last -> init_bucket t parent_bucket parent_ind
+     | LRemove -> failwith "Should never happen"
+     | _ -> ());
 
     (* initialize current node *)
     let new_node = new_dummy_node bucket_ind parent_bucket in
@@ -323,10 +341,11 @@ module Htbl_resizable = struct
     let bucket_ind = key land mask_val in
     let bucket = get_bucket_ref t bucket_ind in
     match Atomic.get bucket with
-    | _, Some _ -> bucket
-    | _, None ->
+    | Llist.Last ->
         init_bucket t bucket bucket_ind;
         bucket
+    | LRemove -> failwith "Should never happen"
+    | _ -> bucket
 
   let rec grow t count =
     let size_val = Atomic.get t.size in
@@ -364,8 +383,9 @@ module Htbl_resizable = struct
     if not is_found then None
     else
       match local.curr with
-      | _, Some { key = _, Regular k; _ } -> Some k
-      | _, _ -> failwith "Should not happen"
+      | Normal { key = _, Regular k; _ } | Remove { key = _, Regular k; _ } ->
+          Some k
+      | _ -> failwith "Should not happen"
 
   let mem key t =
     let bucket = get_bucket key t in
