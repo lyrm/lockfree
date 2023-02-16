@@ -41,7 +41,7 @@ let test_add ntest (module H : HSTBL) =
 
 (* Command line *)
 let usage_msg = "test_perf -m <module_name> -n <number_of_runs>"
-let nb_test = ref 100_000
+let nb_test = ref 300_000
 let hstbl_name = ref "lf"
 
 let speclist =
