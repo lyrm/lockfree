@@ -1,3 +1,5 @@
+(** Single producer single consumer queue. *)
+
 type 'a t
 (** Type of single-producer single-consumer non-resizable thread-safe
    queue that works in FIFO order. *)
@@ -9,8 +11,8 @@ val create : size_exponent:int -> 'a t
    [2^size_exponent].  *)
 
 val push : 'a t -> 'a -> unit
-(** [push q v] pushes [v] at the back of the queue. 
-    
+(** [push q v] pushes [v] at the back of the queue.
+
    @raise [Full] if the queue is full.
 *)
 
