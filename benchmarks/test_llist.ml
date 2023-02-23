@@ -33,7 +33,6 @@ module Sllist : sig
   val mem : 'a -> 'a t -> bool
   val add : 'a -> 'a t -> 'a t
 
-  (*  val delete : 'a -> 'a t -> 'a t*)
 end = struct
   type 'a t = Node of 'a * 'a t | Empty
 
@@ -85,7 +84,7 @@ let test_add_par (ls, unique_elts) =
     while Semaphore.Counting.get_value sema <> 0 do
       Domain.cpu_relax ()
     done;
-    List.iter (fun elt -> Llist.add elt t |> ignore) l
+    List.iter (fun elt -> Llist.add elt Llist.Dummy  t |> ignore) l
   in
   let domains = Array.map (fun l -> Domain.spawn (fun () -> work l)) ls in
   Array.iter Domain.join domains;
@@ -100,7 +99,7 @@ let test_add_seq (ls, unique_elts) =
   Array.iter
     (fun l ->
       Domain.spawn (fun () ->
-          List.iter (fun elt -> Llist.add elt t |> ignore) l)
+          List.iter (fun elt -> Llist.add elt Llist.Dummy t |> ignore) l)
       |> Domain.join)
     ls;
   let res = List.for_all (fun elt -> Llist.mem elt t) unique_elts in

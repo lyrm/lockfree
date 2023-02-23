@@ -24,7 +24,7 @@ let tests_one_domain =
           let t = init () in
 
           let l = List.sort_uniq (fun a b -> -compare a b) l in
-          List.for_all (fun elt -> add elt t) l);
+          List.for_all (fun elt -> add elt Dummy t) l);
       (* Add a list of elements in a linked list and checks :
 
          - the elements that have already been added, the [add]
@@ -36,7 +36,7 @@ let tests_one_domain =
           let open Llist in
           let t = init () in
 
-          let has_been_added = List.map (fun elt -> add elt t) l in
+          let has_been_added = List.map (fun elt -> add elt Dummy t) l in
 
           let rec loop prev l has_been_added =
             match (l, has_been_added) with
@@ -72,12 +72,12 @@ let tests_two_domains =
                 while not (Semaphore.Binary.try_acquire sema) do
                   Domain.cpu_relax ()
                 done;
-                List.map (fun i -> add i t) l)
+                List.map (fun i -> add i Dummy t) l)
           in
           let d2 =
             Domain.spawn (fun () ->
                 Semaphore.Binary.release sema;
-                List.map (fun i -> add i t) l')
+                List.map (fun i -> add i Dummy t) l')
           in
           let res1 = Domain.join d1 in
           let res2 = Domain.join d2 in
@@ -94,12 +94,12 @@ let tests_two_domains =
                 while not (Semaphore.Binary.try_acquire sema) do
                   Domain.cpu_relax ()
                 done;
-                List.iter (fun i -> ignore @@ add i t) l)
+                List.iter (fun i -> ignore @@ add i Dummy t) l)
           in
           let d2 =
             Domain.spawn (fun () ->
                 Semaphore.Binary.release sema;
-                List.iter (fun i -> ignore @@ add i t) l')
+                List.iter (fun i -> ignore @@ add i Dummy t) l')
           in
           let () = Domain.join d1 in
           let () = Domain.join d2 in
@@ -111,7 +111,7 @@ let tests_two_domains =
           let open Llist in
           let t = init () in
           let sema = Semaphore.Binary.make false in
-          List.iter (fun i -> ignore @@ add i t) (l @ l' @ l'');
+          List.iter (fun i -> ignore @@ add i Dummy t) (l @ l' @ l'');
 
           let d1 =
             Domain.spawn (fun () ->
@@ -147,7 +147,7 @@ let tests_two_domains =
           let d2 =
             Domain.spawn (fun () ->
                 Semaphore.Binary.release sema;
-                List.map (fun i -> add i t) l)
+                List.map (fun i -> add i Dummy t) l)
           in
           let remove = Domain.join d1 in
           let _add = Domain.join d2 in

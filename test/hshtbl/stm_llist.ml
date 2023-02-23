@@ -44,7 +44,7 @@ module WSDConf = struct
 
   let run c t =
     match c with
-    | Add k -> Res (bool, Llist.add k t)
+    | Add k -> Res (bool, Llist.add k Llist.Dummy t)
     | Remove k -> Res (bool, Llist.remove k t)
     | Mem k -> Res (bool, Llist.mem k t)
 

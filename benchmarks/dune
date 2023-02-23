@@ -12,3 +12,8 @@
  (name test_perf)
  (libraries lockfree unix)
  (modules test_perf))
+
+(executable
+ (name test_mem)
+ (libraries lockfree unix)
+ (modules test_mem))

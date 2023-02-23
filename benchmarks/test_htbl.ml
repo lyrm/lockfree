@@ -16,7 +16,8 @@ module Hshtbl_seq : HSTBL = struct
     Hashtbl.create size
 
   let add k v t =
-      Hashtbl.replace t k v; true
+    Hashtbl.replace t k v;
+    true
 
   let remove k t =
     if Hashtbl.mem t k then (
@@ -48,7 +49,7 @@ let test_add ntest (module H : HSTBL) =
   Random.self_init ();
   measure_and_launch (fun () ->
       for _ = 0 to ntest do
-        let k = Random.int ntest  in
+        let k = Random.int ntest in
         H.add k k t |> ignore
       done)
 
@@ -64,15 +65,14 @@ let test_add_par ndomain ntest (module H : HSTBL) =
   in
   let test () =
     let domains = List.init ndomain (fun _ -> Domain.spawn work) in
-
     List.iter Domain.join domains
   in
   measure_and_launch test
 
-let _test_add_remove ntest (module H : HSTBL) =
+let test_add_remove ntest (module H : HSTBL) =
   let t = H.init ~size_exponent:12 in
   Random.self_init ();
-  let nr = min 100 (ntest / 10) in
+  let nr = max 100 (ntest / 10) in
   for _ = 0 to 1000 do
     let k = Random.int nr in
     H.add k k t |> ignore
@@ -89,10 +89,10 @@ let _test_add_remove ntest (module H : HSTBL) =
             H.remove k t |> ignore
       done)
 
-let _test_add_remove_par ndomain ntest (module H : HSTBL) =
+let test_add_remove_par ndomain ntest (module H : HSTBL) =
   let t = H.init ~size_exponent:12 in
   Random.self_init ();
-  let nr = max 100 (ntest * 10) in
+  let nr = max 100 (ntest / 10) in
   for _ = 0 to 1000 do
     let k = Random.int nr in
     H.add k k t |> ignore
@@ -127,7 +127,7 @@ let main () =
   let all_tests =
     [
       ("add", test_add, test_add_par, 100_000);
-    (*("add remove", test_add_remove, test_add_remove_par, 10_000);*)
+      ("add remove", test_add_remove, test_add_remove_par, 10_000);
     ]
   in
 
