@@ -31,20 +31,19 @@ module Llist = struct
   let rec find_loop key t prev curr next =
     match curr with
     | Last | LRemove -> (false, { prev; curr; next })
-    | Normal { key = ckey; next = atomic_next; _ }
-    | Remove { key = ckey; next = atomic_next; _ } -> (
-        let next = Atomic.get atomic_next in
+    | Normal node | Remove node -> (
         if Atomic.get prev != curr then
           (* Another domain has changed the current node *)
           try_again key t
         else
+          let next = Atomic.get node.next in
           match next with
           | Normal _ | Last ->
               (* not a node that need to be deleted : we check if we got the right key *)
-              if ckey >= key then (ckey = key, { prev; curr; next })
+              if node.key >= key then (node.key = key, { prev; curr; next })
                 (* if comp = 0, this is the right key, else that means
                    the key is not here as the list is sorted *)
-              else find_loop key t atomic_next next Last
+              else find_loop key t node.next next Last
           | _ ->
               (* the current node has been marked for deletion
                  -> we try to remove it now *)
@@ -64,52 +63,44 @@ module Llist = struct
   (* Warning on find *)
   let find key t : bool * 'a local = try_again key t
 
-  let unsafe_add (key : key) (value : 'a kind) t : bool * 'a local =
-    let rec loop () =
-      let is_found, local = find key t in
-      if is_found then (* key already in the list *)
-        (false, local)
-      else
-        (* not in ! We can add it ! [t.curr] has been set up by [find] to
-           be the next node : we have everything to create our new node. *)
-        let node = Normal { key; next = Atomic.make local.curr; value } in
-        (* let's try to add it! *)
-        if Atomic.compare_and_set local.prev local.curr node then (true, local)
-        else loop ()
-    in
-    loop ()
+  let rec unsafe_add (key : key) (value : 'a kind) t : bool * 'a local =
+    let is_found, local = find key t in
+    if is_found then (* key already in the list *)
+      (false, local)
+    else if
+      (* not in ! We can add it ! [t.curr] has been set up by [find] to
+         be the next node : we have everything to create our new node. *)
+      (* let's try to add it! *)
+      Atomic.compare_and_set local.prev local.curr
+      @@ Normal { key; next = Atomic.make local.curr; value }
+    then (true, local)
+    else unsafe_add key value t
 
   let add (key : key) (value : 'a kind) (t : 'a t) =
     fst (unsafe_add key value t)
 
-  let unsafe_remove (key : key) t =
-    let rec loop () =
-      let is_found, local = find key t in
-      if not is_found then (false, local)
-      else
-        let curr =
-          match local.curr with
-          | Normal node -> node
-          | _ -> failwith " Should never happen"
-        in
-        if
-          not
-            (Atomic.compare_and_set curr.next local.next
-               (mark_to_delete local.next))
-        then loop ()
-        else if Atomic.compare_and_set local.prev local.curr local.next then
-          (true, local)
-        else (
-          ignore (find key t);
-          (true, local))
-    in
-    loop ()
+  let rec unsafe_remove (key : key) t =
+    let is_found, local = find key t in
+    if not is_found then (false, local)
+    else
+      let curr =
+        match local.curr with
+        | Normal node -> node
+        | _ -> failwith " Should never happen"
+      in
+      if
+        not
+          (Atomic.compare_and_set curr.next local.next
+             (mark_to_delete local.next))
+      then unsafe_remove key t
+      else if Atomic.compare_and_set local.prev local.curr local.next then
+        (true, local)
+      else (
+        ignore (find key t);
+        (true, local))
 
   let remove (key : key) (t : 'a t) = fst (unsafe_remove key t)
-
-  let mem key t =
-    let is_found, _ = find key t in
-    is_found
+  let mem key t = fst @@ find key t
 end
 
 module Common = struct
@@ -150,8 +141,7 @@ module Common = struct
     (a lsr 1) land key
 
   let new_dummy_node id llist =
-    let new_key = reverse id in
-    let _, local = Llist.unsafe_add new_key Dummy llist in
+    let _, local = Llist.unsafe_add (reverse id) Dummy llist in
     (* If the insertion succeeded ([is_added] = true) then [local.prev] contains the
        atomic value of the new node.
        If it failed that means another domain has inserted it. In this case,
@@ -178,7 +168,9 @@ module Htbl = struct
     {
       mask;
       buckets =
-        Array.init size (fun key -> Atomic.make (new_dummy_node key llist));
+        Array.init size (fun i ->
+            if i = 0 then Atomic.make (new_dummy_node 0 llist)
+            else Atomic.make Llist.Last);
     }
 
   (** [init_bucket buckets ind] inits a bucket and all its parents if needed *)
@@ -202,24 +194,23 @@ module Htbl = struct
       it. *)
   let get_bucket_ind key buckets mask =
     let ind = key land mask in
-    (match Atomic.get buckets.(ind) with
-    | Llist.Last -> init_bucket buckets ind
+    let bucket = buckets.(ind) in
+    match Atomic.get bucket with
+    | Llist.Last ->
+        init_bucket buckets ind;
+        buckets.(ind)
     | LRemove -> failwith "Should never happen."
-    | _ -> ());
-    ind
+    | _ -> bucket
 
   (** [add key value t] *)
   let add key value { buckets; mask; _ } =
-    let bucket_ind = get_bucket_ind key buckets mask in
-    let is_added, _local =
-      Llist.unsafe_add (compute_hkey key) (Regular value) buckets.(bucket_ind)
-    in
-    is_added
+    Llist.add (compute_hkey key) (Regular value)
+    @@ get_bucket_ind key buckets mask
 
   let find key { buckets; mask; _ } =
-    let bucket = get_bucket_ind key buckets mask in
-    let key = compute_hkey key in
-    let is_found, local = Llist.find key buckets.(bucket) in
+    let is_found, local =
+      Llist.find (compute_hkey key) (get_bucket_ind key buckets mask)
+    in
     if not is_found then None
     else
       match local.curr with
@@ -228,16 +219,10 @@ module Htbl = struct
       | _ -> failwith "Should not happen"
 
   let mem key { buckets; mask; _ } =
-    let bucket = get_bucket_ind key buckets mask in
-    let key = compute_hkey key in
-    let is_found, _ = Llist.find key buckets.(bucket) in
-    is_found
+    fst @@ Llist.find (compute_hkey key) (get_bucket_ind key buckets mask)
 
   let remove key { buckets; mask; _ } =
-    let bucket = get_bucket_ind key buckets mask in
-    let key = compute_hkey key in
-    let is_removed, _ = Llist.unsafe_remove key buckets.(bucket) in
-    is_removed
+    Llist.remove (compute_hkey key) (get_bucket_ind key buckets mask)
 end
 
 module Htbl_resizable = struct
@@ -268,7 +253,9 @@ module Htbl_resizable = struct
     let exp_max = grow_exp + size_exponent in
     let size_max = Int.shift_left 1 exp_max in
     let first_seg =
-      Array.init segment_size (fun j -> Atomic.make (new_dummy_node j llist))
+      Array.init segment_size (fun i ->
+          if i = 0 then Atomic.make (new_dummy_node 0 llist)
+          else Atomic.make Llist.Last)
     in
     let segments =
       Array.init (Int.shift_left 1 grow_exp) (fun i ->
@@ -333,29 +320,25 @@ module Htbl_resizable = struct
     | LRemove -> failwith "Should never happen"
     | _ -> bucket
 
-  let rec grow t count =
-    let size_val = Atomic.get t.size in
-    if count > size_val * t.max && size_val <= t.size_max then
-      let new_size = size_val * 2 in
-      if Atomic.compare_and_set t.size size_val new_size then ()
+  let rec grow ({ size; size_max; max; _ } as t) count =
+    let size_val = Atomic.get size in
+    if count > size_val * max && size_val <= size_max then
+      if Atomic.compare_and_set t.size size_val (size_val lsl 1) then ()
       else grow t count
 
   (** [add key value t] *)
   let add (key : key) (value : 'a) (t : 'a t) =
-    let bucket = get_bucket key t in
-    let is_added, _local =
-      Llist.unsafe_add (compute_hkey key) (Regular value) bucket
+    let is_added =
+      Llist.add (compute_hkey key) (Regular value) @@ get_bucket key t
     in
     if not is_added then false
-    else
-      let prev_count = Atomic.fetch_and_add t.count 1 in
-      grow t prev_count;
-      true
+    else (
+      Atomic.fetch_and_add t.count 1 |> grow t;
+      true)
 
   let add_no_resize key value t =
-    let bucket = get_bucket key t in
-    let is_added, _local =
-      Llist.unsafe_add (compute_hkey key) (Regular value) bucket
+    let is_added =
+      Llist.add (compute_hkey key) (Regular value) @@ get_bucket key t
     in
     if not is_added then false
     else (
@@ -363,9 +346,7 @@ module Htbl_resizable = struct
       true)
 
   let find key t =
-    let bucket = get_bucket key t in
-    let key = compute_hkey key in
-    let is_found, local = Llist.find key bucket in
+    let is_found, local = Llist.find (compute_hkey key) (get_bucket key t) in
     if not is_found then None
     else
       match local.curr with
@@ -374,15 +355,11 @@ module Htbl_resizable = struct
       | _ -> failwith "Should not happen"
 
   let mem key t =
-    let bucket = get_bucket key t in
-    let key = compute_hkey key in
-    let is_found, _ = Llist.find key bucket in
+    let is_found, _ = Llist.find (compute_hkey key) (get_bucket key t) in
     is_found
 
   let remove key t =
-    let bucket = get_bucket key t in
-    let key = compute_hkey key in
-    let is_removed, _ = Llist.unsafe_remove key bucket in
+    let is_removed = Llist.remove (compute_hkey key) (get_bucket key t) in
     if not is_removed then false
     else (
       Atomic.decr t.count;
