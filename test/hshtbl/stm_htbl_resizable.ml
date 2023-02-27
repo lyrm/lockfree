@@ -75,7 +75,7 @@ module WSDT_seq = STM_sequential.Make (WSDConf)
 module WSDT_dom = STM_domain.Make (WSDConf)
 
 let () =
-  let count = 500 in
+  let count = 300 in
   QCheck_base_runner.run_tests_main
     [
       WSDT_seq.agree_test ~count

@@ -1,8 +1,10 @@
-module Htbl = Lockfree.Hshtbl
+module Htbl = Lockfree.Hshtbl_resizable
 
 (* making sure the generation int list are small enough (small_nat < 100) *)
 let nat_list = QCheck.(list_of_size Gen.small_nat small_nat)
 let nat_int_list = QCheck.(list_of_size Gen.small_nat (pair small_nat int))
+
+let count = 10_000
 
 (* this function makes sure that all pairs in [l1] and [l2] have a
    different key without sorting the lists.
@@ -13,7 +15,7 @@ let nat_int_list = QCheck.(list_of_size Gen.small_nat (pair small_nat int))
    The maximun key value of l1 is added to all keys of l2 to create
    new unique keys and avoid reducing the lists to much
 *)
-let remove_dup_keys l1 l2 =
+let avoid_dup_keys l1 l2 =
   let max_l1, l1_uniq =
     List.fold_left
       (fun (m, acc) (k, v) ->
@@ -33,9 +35,9 @@ let tests_one_domain =
     [
       (* Add a list of unique elements in a linked list. All
          insertion should success. *)
-      Test.make ~name:"seq_add" nat_int_list (fun l ->
+      Test.make ~count ~name:"seq_add" nat_int_list (fun l ->
           let open Htbl in
-          let t = init ~size_exponent:10 in
+          let t = init ~size_exponent:4 in
           let l = List.sort_uniq (fun (a, _) (b, _) -> compare a b) l in
           List.for_all (fun (k, v) -> add k v t) l);
       (* Add a list of elements in a linked list and checks :
@@ -45,9 +47,9 @@ let tests_one_domain =
 
          - [mem] on all added elements returns [true].
       *)
-      Test.make ~name:"seq_add_mem" nat_int_list (fun l ->
+      Test.make ~count ~name:"seq_add_mem" nat_int_list (fun l ->
           let open Htbl in
-          let t = init ~size_exponent:10 in
+          let t = init ~size_exponent:4 in
 
           let has_been_added = List.map (fun (k, v) -> add k v t) l in
 
@@ -69,9 +71,9 @@ let tests_one_domain =
          - added and removed elements are the same
          - mem on all elements return false
       *)
-      Test.make ~name:"seq_remove" nat_int_list (fun l ->
+      Test.make ~count ~name:"seq_remove" nat_int_list (fun l ->
           let open Htbl in
-          let t = init ~size_exponent:10 in
+          let t = init ~size_exponent:4 in
 
           let has_been_added = List.map (fun (k, v) -> add k v t) l in
           let has_been_removed = List.map (fun (k, _) -> remove k t) l in
@@ -84,10 +86,10 @@ let tests_one_domain =
          forall k, l,  List.assoc_opt k l = Htbl.find k t
          where t = List.iter (fun (k, v) -> Htbl.add k v t |> ignore) l (Htbl.init ~size_exponent:n)
       *)
-      Test.make ~name:"seq_find" (pair nat_int_list nat_list)
+      Test.make ~count ~name:"seq_find" (pair nat_int_list nat_list)
         (fun (to_add, to_search_for) ->
           let open Htbl in
-          let t = init ~size_exponent:10 in
+          let t = init ~size_exponent:4 in
 
           List.iter (fun (k, v) -> add k v t |> ignore) to_add;
           let found = List.map (fun k -> find k t) to_search_for in
@@ -98,9 +100,9 @@ let tests_one_domain =
             to_search_for found);
       (* Add a list of elements and then search for then.
       *)
-      Test.make ~name:"seq_find2" nat_int_list (fun l ->
+      Test.make ~count ~name:"seq_find2" nat_int_list (fun l ->
           let open Htbl in
-          let t = init ~size_exponent:10 in
+          let t = init ~size_exponent:4 in
 
           let has_been_added = List.map (fun (k, v) -> add k v t) l in
           let should_be_found = List.map (fun (k, _) -> find k t) l in
@@ -126,11 +128,11 @@ let tests_two_domain =
       (* Two domains add elements that all have a different key. The
          tested properties is that no element is missing at the
          end. *)
-      Test.make ~name:"par_add" (pair nat_int_list nat_int_list)
+      Test.make ~count ~name:"par_add" (pair nat_int_list nat_int_list)
         (fun (l1, l2) ->
-          let l1, l2 = remove_dup_keys l1 l2 in
+          let l1, l2 = avoid_dup_keys l1 l2 in
           let open Htbl in
-          let t = init ~size_exponent:10 in
+          let t = init ~size_exponent:4 in
           let sema = Semaphore.Binary.make false in
 
           let domain2 =
@@ -162,6 +164,103 @@ let tests_two_domain =
           && List.for_all (fun a -> a) added_by_d2
           && List.for_all (fun (k, v) -> find k t = Some v) l1
           && List.for_all (fun (k, v) -> find k t = Some v) l2);
+      (* Parallel removal of elements in a sequentially build hash table. *)
+      Test.make ~count ~name:"par_remove" nat_int_list (fun to_add ->
+          let open Htbl in
+          let t = init ~size_exponent:4 in
+          let sema = Semaphore.Binary.make false in
+          let added = List.map (fun (k, v) -> add k v t) to_add in
+
+          let domain2 =
+            Domain.spawn (fun () ->
+                Semaphore.Binary.release sema;
+                List.map
+                  (fun (k, _v) ->
+                    Domain.cpu_relax ();
+                    remove k t)
+                  to_add)
+          in
+
+          (* make sure the other domain has begun *)
+          while not (Semaphore.Binary.try_acquire sema) do
+            Domain.cpu_relax ()
+          done;
+
+          let removed_by_d1 =
+            List.map
+              (fun (k, _v) ->
+                Domain.cpu_relax ();
+                remove k t)
+              to_add
+          in
+          let removed_by_d2 = Domain.join domain2 in
+
+          let rec test = function
+            (* not done with logical operator for readability *)
+            | [], [], [] -> true
+            | false :: xs, false :: xs', false :: xs''
+            | true :: xs, true :: xs', false :: xs''
+            | true :: xs, false :: xs', true :: xs'' ->
+                test (xs, xs', xs'')
+            | _, _, _ -> false
+          in
+
+          (* test properties : all elt have been added and can be sequentially found *)
+          test (added, removed_by_d1, removed_by_d2));
+      (* Parallel addition and removeal of elements in a sequentially build hash table. *)
+      Test.make ~count ~name:"par_add_remove" (pair nat_int_list nat_int_list)
+        (fun (lseq, lpar) ->
+          let to_add_seq, to_add_par = avoid_dup_keys lseq lpar in
+          let to_remove = List.rev lpar in
+          let open Htbl in
+          let t = init ~size_exponent:4 in
+          let sema = Semaphore.Binary.make false in
+
+          let added_seq = List.map (fun (k, v) -> add k v t) to_add_seq in
+
+          let domain2 =
+            Domain.spawn (fun () ->
+                Semaphore.Binary.release sema;
+                List.map
+                  (fun (k, _v) ->
+                    Domain.cpu_relax ();
+                    remove k t)
+                  to_remove)
+          in
+
+          (* make sure the other domain has begun *)
+          while not (Semaphore.Binary.try_acquire sema) do
+            Domain.cpu_relax ()
+          done;
+
+          let added_par =
+            List.map
+              (fun (k, v) ->
+                Domain.cpu_relax ();
+                add k v t)
+              to_add_par
+          in
+          let removed = Domain.join domain2 in
+
+          let rec test to_remove removed prev =
+            match (to_remove, removed) with
+            | [], [] -> true
+            | (k, _) :: to_remove, false :: removed ->
+                if List.mem k prev then test to_remove removed prev
+                else if List.mem_assoc k to_add_seq then false
+                else test to_remove removed prev
+            | (k, _) :: to_remove, true :: removed ->
+                if List.mem k prev then false
+                else test to_remove removed (k :: prev)
+            | _, _ -> false
+          in
+
+          (* to_add_seq and to_add_par have no identical key or
+             duplicated key. Addition should always succeed. *)
+          (* remove is done on key contained in*)
+          List.for_all (fun a -> a) added_seq
+          && List.for_all (fun a -> a) added_par
+          && test to_remove removed []);
     ]
 
 let main () =
