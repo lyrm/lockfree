@@ -42,6 +42,35 @@ let two_domains_remove () =
                   || (removed_by_2 && not removed_by_1))
                 !res1 !res2)))
 
+let two_domains_remove_bis () =
+  Atomic.trace (fun () ->
+      let htbl = Htbl.init ~size_exponent:2 in
+      let items = [ 0; 1; 2; 3 ] in
+      let to_remove = [ 0; 0; 1; 1 ] in
+      let res1 = ref [] in
+      let res2 = ref [] in
+
+      (* Initialization*)
+      List.iter (fun elt -> Htbl.add elt elt htbl |> ignore) items;
+
+      let remove_all items = List.map (fun elt -> Htbl.remove elt htbl) items in
+
+      Atomic.spawn (fun () -> res1 := remove_all to_remove);
+      Atomic.spawn (fun () -> res2 := remove_all to_remove);
+
+      Atomic.final (fun () ->
+          Atomic.check (fun () ->
+              List.for_all (fun elt -> Htbl.mem elt htbl |> not) to_remove);
+
+          Atomic.check (fun () ->
+              match (!res1, !res2) with
+              | [ true; false; true; false ], [ false; false; false; false ]
+              | [ false; false; false; false ], [ true; false; true; false ]
+              | [ true; false; false; false ], [ false; false; true; false ]
+              | [ false; false; true; false ], [ true; false; false; false ] ->
+                  true
+              | _ -> false)))
+
 let two_domains_add_remove () =
   Atomic.trace (fun () ->
       let htbl = Htbl.init ~size_exponent:3 in
@@ -79,6 +108,7 @@ let () =
         [
           test_case "2-domains_add" `Slow two_domains_add;
           test_case "2-domains_remove" `Slow two_domains_remove;
+          test_case "2-domains_remove_bis" `Slow two_domains_remove_bis;
           test_case "2-domains_add_remove" `Slow two_domains_add_remove;
         ] );
     ]

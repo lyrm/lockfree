@@ -1,3 +1,7 @@
+(*
+ * Copyright (c) 2023, Carine Morel <carine.morel.pro@gmail.com>
+ *)
+
 module Type = struct
   type 'b kind = Dummy | Regular of 'b
   type key = int
@@ -6,14 +10,15 @@ end
 module Llist = struct
   include Type
 
-  type 'a marked_ptr = Last | LRemove | Normal of 'a node | Remove of 'a node
-  and 'a t = 'a marked_ptr Atomic.t
-  and 'a node = { key : key; value : 'a kind; next : 'a marked_ptr Atomic.t }
+  type 'a marked = Last | LRemove | Normal of 'a node | Remove of 'a node
+  and 'a node = { key : key; value : 'a kind; next : 'a marked Atomic.t }
+
+  type 'a t = 'a marked Atomic.t
 
   type 'a local = {
-    prev : 'a marked_ptr Atomic.t;
-    curr : 'a marked_ptr;
-    next : 'a marked_ptr;
+    prev : 'a marked Atomic.t;
+    curr : 'a marked;
+    next : 'a marked;
   }
 
   let init () : 'a t = Atomic.make Last
@@ -23,54 +28,36 @@ module Llist = struct
     | LRemove -> Last
     | Remove node -> Normal node
 
-  let mark_to_delete = function
+  let mark_to_be_removed = function
     | Last -> LRemove
     | Normal node -> Remove node
     | _ as x -> x
 
-  let rec find_loop key t prev curr next =
+  let rec find_loop key t prev curr =
     match curr with
-    | Last | LRemove -> (false, { prev; curr; next })
+    | Last | LRemove -> (false, { prev; curr; next = Last })
     | Normal node | Remove node -> (
-        if Atomic.get prev != curr then
-          (* Another domain has changed the current node *)
-          try_again key t
+        if Atomic.get prev != curr then try_again key t
         else
           let next = Atomic.get node.next in
           match next with
           | Normal _ | Last ->
-              (* not a node that need to be deleted : we check if we got the right key *)
               if node.key >= key then (node.key = key, { prev; curr; next })
-                (* if comp = 0, this is the right key, else that means
-                   the key is not here as the list is sorted *)
-              else find_loop key t node.next next Last
+              else find_loop key t node.next next
           | _ ->
-              (* the current node has been marked for deletion
-                 -> we try to remove it now *)
-              (* first we remove the "to_remove" flag for the next node *)
               let next = convert_to_normal next in
-              (* then we try to insert here at the place of the remove node *)
               if Atomic.compare_and_set prev curr next then
-                (* it worked ! great, let's continue searching our key ! *)
-                find_loop key t prev next Last
-              else
-                (* Another domain removed the marked node before us, we
-                   need to begin again *)
-                try_again key t)
+                find_loop key t prev next
+              else try_again key t)
 
-  and try_again key t = find_loop key t t (Atomic.get t) Last
+  and try_again key t = find_loop key t t (Atomic.get t)
 
-  (* Warning on find *)
   let find key t : bool * 'a local = try_again key t
 
   let rec unsafe_add (key : key) (value : 'a kind) t : bool * 'a local =
     let is_found, local = find key t in
-    if is_found then (* key already in the list *)
-      (false, local)
+    if is_found then (false, local)
     else if
-      (* not in ! We can add it ! [t.curr] has been set up by [find] to
-         be the next node : we have everything to create our new node. *)
-      (* let's try to add it! *)
       Atomic.compare_and_set local.prev local.curr
       @@ Normal { key; next = Atomic.make local.curr; value }
     then (true, local)
@@ -91,7 +78,7 @@ module Llist = struct
       if
         not
           (Atomic.compare_and_set curr.next local.next
-             (mark_to_delete local.next))
+             (mark_to_be_removed local.next))
       then unsafe_remove key t
       else if Atomic.compare_and_set local.prev local.curr local.next then
         (true, local)
@@ -154,12 +141,7 @@ module Htbl = struct
   open Common
   include Type
 
-  type 'a t = {
-    (* current number of buckets (minus 1) *)
-    mask : int;
-    (* pointers to the linked list *)
-    buckets : 'a Llist.marked_ptr Atomic.t array;
-  }
+  type 'a t = { mask : int; buckets : 'a Llist.marked Atomic.t array }
 
   let init ~size_exponent =
     let size = Int.shift_left 1 size_exponent in
@@ -173,21 +155,17 @@ module Htbl = struct
             else Atomic.make Llist.Last);
     }
 
-  (** [init_bucket buckets ind] inits a bucket and all its parents if needed *)
   let rec init_bucket buckets ind =
     let parent_ind = unset_msb ind in
     let parent_bucket = buckets.(parent_ind) in
-    (* initialize parents recursively if needeed *)
+
     (if parent_ind <> ind then
      match Atomic.get parent_bucket with
      | Llist.Last -> init_bucket buckets parent_ind
      | LRemove -> failwith "Should never happen."
      | _ -> ());
 
-    (* initialize current node *)
-    let new_node = new_dummy_node ind parent_bucket in
-    (* would Atomic.CAS be better ? *)
-    Atomic.set buckets.(ind) new_node
+    new_dummy_node ind parent_bucket |> Atomic.set buckets.(ind)
 
   (** [get_bucket_id key buckets mask] searches the bucket's index corresponding
       to [key] (= [key mod t.size]), initializes if needed and returns
@@ -230,33 +208,38 @@ module Htbl_resizable = struct
   include Type
 
   (* pointers to a node in linked list *)
-  type 'a bucket = 'a Llist.marked_ptr Atomic.t
+  type 'a bucket = 'a Llist.marked Atomic.t
   type 'a segment = 'a bucket array
 
   type 'a t = {
     (* total item count *)
     count : int Atomic.t;
-    (* current number of buckets (minus 1) *)
-    size : int Atomic.t;
+    (* current number of segments *)
+    number_of_buckets : int Atomic.t;
     (* maximum number of items in a bucket (on average).  Maximun
        number of elements in an hash table [t] is [t.sizes] * [t.max] *)
     max : int;
     segments : 'a segment option Atomic.t array;
-    size_max : int;
+    max_number_of_buckets : int;
     segment_size : int;
   }
 
   let init ~size_exponent =
-    let segment_size = Int.shift_left 1 size_exponent in
-    let llist = Llist.init () in
+    let max = 2 in
     let grow_exp = 10 in
+    let llist = Llist.init () in
+
+    let segment_size = Int.shift_left 1 size_exponent in
+
     let exp_max = grow_exp + size_exponent in
-    let size_max = Int.shift_left 1 exp_max in
+    let max_number_of_buckets = Int.shift_left 1 exp_max in
+
     let first_seg =
       Array.init segment_size (fun i ->
           if i = 0 then Atomic.make (new_dummy_node 0 llist)
           else Atomic.make Llist.Last)
     in
+
     let segments =
       Array.init (Int.shift_left 1 grow_exp) (fun i ->
           match i with
@@ -265,11 +248,11 @@ module Htbl_resizable = struct
     in
     {
       count = Atomic.make 0;
-      size = Atomic.make segment_size;
+      number_of_buckets = Atomic.make segment_size;
       segment_size;
-      size_max;
+      max_number_of_buckets;
       segments;
-      max = 2;
+      max;
     }
 
   let is_empty { count; _ } = Atomic.get count = 0
@@ -279,13 +262,13 @@ module Htbl_resizable = struct
     match Atomic.get seg with
     | Some seg -> seg
     | None ->
-        (* create a new segment *)
-        let new_segment =
-          Array.init t.segment_size (fun _ -> Atomic.make Llist.Last)
-        in
-        (* initialize (can failed if another domain has already done it) *)
-        Atomic.compare_and_set seg None (Some new_segment) |> ignore;
-        (* should never fail *)
+        (* Can failed if another domain has already done it *)
+        Atomic.compare_and_set seg None
+          (Some (Array.init t.segment_size (fun _ -> Atomic.make Llist.Last)))
+        |> ignore;
+        (* always true as either this domain or another just changed
+           the value of this cell and the only values written in
+           [t.segments] are `Some` values *)
         Option.get (Atomic.get seg)
 
   let get_bucket_ref t ind =
@@ -295,22 +278,17 @@ module Htbl_resizable = struct
 
   (** [init_bucket buckets ind] inits a bucket and all its parents if needed *)
   let rec init_bucket t bucket bucket_ind =
-    (* get parent index *)
     let parent_ind = unset_msb bucket_ind in
     let parent_bucket = get_bucket_ref t parent_ind in
-    (* initialize parents recursively if necessary *)
     (if parent_ind <> bucket_ind then
      match Atomic.get parent_bucket with
      | Llist.Last -> init_bucket t parent_bucket parent_ind
      | LRemove -> failwith "Should never happen"
      | _ -> ());
-
-    (* initialize current node *)
-    let new_node = new_dummy_node bucket_ind parent_bucket in
-    Atomic.set bucket new_node
+    new_dummy_node bucket_ind parent_bucket |> Atomic.set bucket
 
   let get_bucket key t =
-    let mask_val = Atomic.get t.size - 1 in
+    let mask_val = Atomic.get t.number_of_buckets - 1 in
     let bucket_ind = key land mask_val in
     let bucket = get_bucket_ref t bucket_ind in
     match Atomic.get bucket with
@@ -320,10 +298,17 @@ module Htbl_resizable = struct
     | LRemove -> failwith "Should never happen"
     | _ -> bucket
 
-  let rec grow ({ size; size_max; max; _ } as t) count =
-    let size_val = Atomic.get size in
-    if count > size_val * max && size_val <= size_max then
-      if Atomic.compare_and_set t.size size_val (size_val lsl 1) then ()
+  let rec grow ({ number_of_buckets; max_number_of_buckets; max; _ } as t) count
+      =
+    let number_of_buckets_val = Atomic.get number_of_buckets in
+    if
+      count > number_of_buckets_val * max
+      && number_of_buckets_val < max_number_of_buckets
+    then
+      if
+        Atomic.compare_and_set t.number_of_buckets number_of_buckets_val
+          (number_of_buckets_val lsl 1)
+      then ()
       else grow t count
 
   (** [add key value t] *)

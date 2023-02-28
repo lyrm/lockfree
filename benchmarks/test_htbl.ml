@@ -127,7 +127,7 @@ let main () =
   let all_tests =
     [
       ("add", test_add, test_add_par, 100_000);
-      ("add remove", test_add_remove, test_add_remove_par, 10_000);
+      ("add remove", test_add_remove, test_add_remove_par, 100_000);
     ]
   in
 
