@@ -75,20 +75,58 @@ let tests_sequential =
               false 
             ) 
             | [] -> true 
-
-            in 
-            not_find_all_elems lpush
+            
+          in 
+          not_find_all_elems lpush
           )
     ]
 
-(* let tests_two_domains = 
+let tests_two_domains = 
   QCheck. 
   [
-    (* TEST 1: Two domains doing multiple one push and one pop in parallel *)
-    Test.make ~count:10000 ~name:"parallel_add_remove" (pair small_nat small_nat) (fun (npush1, npush2) ->
-      assume (npush1 > 0 && npush2 > 0);
+    (* TEST 1: Two domains doing multiple adds *)
+    Test.make ~name:"parallel_add" (pair small_nat small_nat) (fun (npush1, npush2) -> 
+      let sl = Atomicskiplist.create () in 
+      let sema = Semaphore.Binary.make false in 
+      let lpush1 = List.init npush1 (fun i -> i) in 
+      let lpush2 = List.init npush2 (fun i -> i+npush1) in 
+        let work lpush = 
+          List.map 
+            (fun elt ->
+              let completed =  Atomicskiplist.add sl elt in 
+              Domain.cpu_relax ();
+              completed
+              )
+            lpush
+        in
+        
+        let domain1 = 
+          Domain.spawn (fun () -> 
+            Semaphore.Binary.release sema;
+            work lpush1
+            )
+          in 
+        let popped2 = 
+          while not (Semaphore.Binary.try_acquire sema) do 
+            Domain.cpu_relax ()
+          done;
+          work lpush2
+        in 
+        let popped1 = Domain.join domain1 in 
+        let rec compare_all_true l = match l with 
+        | true::t -> compare_all_true t 
+        | false::_ -> false 
+        | [] -> true
+        in
+        compare_all_true popped1 && compare_all_true popped2
+
+
+      
+      )
+    (* TEST 2: Two domains doing multiple one push and one pop in parallel *)
+    (* Test.make ~count:10000 ~name:"parallel_add_remove" (pair small_nat small_nat) (fun (npush1, npush2) ->
       let sl = Atomicskiplist.create ()  in 
-      (* let sema = Semaphore.Binary.make false in  *)
+      let sema = Semaphore.Binary.make false in 
 
       let lpush1 = List.init npush1 (fun i -> i) in 
       let lpush2 = List.init npush2 (fun i -> i+npush1) in 
@@ -125,7 +163,7 @@ let tests_sequential =
 
     );
 
-    (* TEST 2: Parallel push and pop using the same elements in two domains *)
+    (* TEST 3: Parallel push and pop using the same elements in two domains *)
 
     Test.make ~name:"parallel_add_remove_same_list" (list int) (fun lpush -> 
         let sl = Atomicskiplist.create () in 
@@ -161,13 +199,13 @@ let tests_sequential =
         | _::_, [] | [], _::_ -> false
           in 
         check_complimentary add1 add2 && check_complimentary remove1 remove2
-      )
-  ] *)
+      ) *)
+  ]
 
 let () = 
   let to_alcotest = List.map QCheck_alcotest.to_alcotest in 
   Alcotest.run "Atomic Skip List"
     [
       ("test_sequential",  to_alcotest tests_sequential);
-      (* ("tests_two_domains", to_alcotest tests_two_domains) *)
+      ("tests_two_domains", to_alcotest tests_two_domains)
     ]
