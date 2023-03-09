@@ -1,4 +1,5 @@
 type 'a markablereference = { node : 'a; marked : bool }
+(** markable reference: stores a reference to a node and has a field to specify if it is marked *)
 
 type 'a node = {
   key : int;
@@ -6,10 +7,11 @@ type 'a node = {
   next : 'a node option markablereference Atomic.t array;
 }
 
-type 'a t = { head : 'a node; }
+type 'a t = { head : 'a node }
 
 let max_height = 10
 
+(** create_new_node: creates a new node with some value and height *)
 let create_new_node value height =
   let next =
     let arr =
@@ -22,15 +24,25 @@ let create_new_node value height =
   in
   { key = value; height; next }
 
+(** create_dummy_node_array: Creates a new array with the different node for each index *)
 let create_dummy_node_array () =
-  Array.make (max_height + 1) (create_new_node Int.max_int max_height)
+  let arr =
+    Array.make (max_height + 1) (create_new_node Int.max_int max_height)
+  in
+  for i = 1 to max_height do
+    arr.(i) <- create_new_node Int.max_int max_height
+  done;
+  arr
 
+(** Get a random level from 1 till max_height (both included) *)
 let get_random_level () =
   let rec count_level cur_level =
-    if ((cur_level == max_height) || Random.float 1.0 <= 0.5) then cur_level else count_level (cur_level + 1)
+    if cur_level == max_height || Random.float 1.0 <= 0.5 then cur_level
+    else count_level (cur_level + 1)
   in
   count_level 1
 
+(** Create a new skiplist *)
 let create () =
   let tail =
     {
@@ -51,29 +63,33 @@ let create () =
     done;
     arr
   in
-  let head = { key = Int.min_int;  height = max_height; next } in
+  let head = { key = Int.min_int; height = max_height; next } in
   { head }
 
-(** let marked ref = ref.marked == false  
-let get_ref ref = ref.node **)
+(** get_mark_ref: Returns the node and the mark from an Atomic markablereference *)
 let get_mark_ref atomic_ref =
   let ref = Atomic.get atomic_ref in
   (ref.node, ref.marked)
 
+(** get_ref: Returns only the node from an Atomic markablereference *)
 let get_ref atomic_ref =
   let ref = Atomic.get atomic_ref in
   ref.node
 
+(** Compares old_node and old_mark with the atomic reference and if they are the same then 
+    Replaces the value in the atomic with node and mark *)
 let compare_set_mark_ref atomic old_node old_mark node mark =
   let current = Atomic.get atomic in
   let set_mark_ref () =
     Atomic.compare_and_set atomic current { node; marked = mark }
   in
-  match (current.node, old_node) with
-  | Some current_node, Some old_node ->
-      current_node == old_node && current.marked == old_mark && set_mark_ref ()
-  | _, _ -> false
+  current = { node = old_node; marked = old_mark } && set_mark_ref ()
 
+(** Returns true if key is found within the skiplist else false;
+    Irrespective of return value, fills the preds and succs array with 
+    the predecessors nodes with smaller key and successors nodes with greater than 
+    or equal to key 
+  *)
 let find_in key preds succs sl =
   let head = sl.head in
   let init level =
@@ -88,9 +104,7 @@ let find_in key preds succs sl =
       let snip =
         compare_set_mark_ref prev_node.next.(level) curr false succ false
       in
-      if not snip then
-        let prev, curr, succ, mark = init level in
-        iterate prev curr succ mark level
+      if not snip then (None, None)
       else
         let curr = get_ref prev_node.next.(level) in
         let succ, mark = get_mark_ref (Option.get curr).next.(level) in
@@ -103,59 +117,65 @@ let find_in key preds succs sl =
   let rec update_arrays level =
     let prev, curr, succ, mark = init level in
     let prev, curr = iterate prev curr succ mark level in
-    preds.(level) <- Option.get prev;
-    succs.(level) <- Option.get curr;
-    if level > 0 then update_arrays (level - 1)
-    else (Option.get curr).key == key
+    if prev = None && curr = None then update_arrays max_height
+    else (
+      preds.(level) <- Option.get prev;
+      succs.(level) <- Option.get curr;
+      if level > 0 then update_arrays (level - 1)
+      else (Option.get curr).key == key)
   in
   update_arrays max_height
 
+(** Adds a new key to the skiplist sl. *)
 let add sl key =
   let top_level = get_random_level () in
   let preds = create_dummy_node_array () in
   let succs = create_dummy_node_array () in
-  let found = find_in key preds succs sl in
-  if found then false
-  else
-    let new_node = create_new_node key top_level in
-    for level = 0 to top_level do
-      let succ = succs.(level) in
-      let mark_ref = { node = Some succ; marked = false } in
-      new_node.next.(level) <- Atomic.make mark_ref
-    done;
-    let pred = preds.(0) in
-    let succ = succs.(0) in
-    let rec set_bottom_level () =
+  let new_node = create_new_node key top_level in
+  for level = 0 to top_level do
+    let succ = succs.(level) in
+    let mark_ref = { node = Some succ; marked = false } in
+    new_node.next.(level) <- Atomic.make mark_ref
+  done;
+  let rec repeat () =
+    let found = find_in key preds succs sl in
+    if found then false
+    else
+      let pred = preds.(0) in
+      let succ = succs.(0) in
       if
         not
           (compare_set_mark_ref pred.next.(0) (Some succ) false (Some new_node)
              false)
-      then set_bottom_level ()
-    in
-    set_bottom_level ();
-    let rec update_levels level =
-      let rec set_next () =
-        let pred = preds.(level) in
-        let succ = succs.(level) in
-        if
-          compare_set_mark_ref pred.next.(level) (Some succ) false
-            (Some new_node) false
-        then ()
-        else (
-          ignore (find_in key preds succs sl);
-          set_next ())
-      in
-      set_next ();
-      if level < top_level then update_levels (level + 1)
-    in
-    update_levels 1;
-    true
+      then repeat ()
+      else
+        let rec update_levels level =
+          let rec set_next () =
+            let pred = preds.(level) in
+            let succ = succs.(level) in
+            if
+              compare_set_mark_ref pred.next.(level) (Some succ) false
+                (Some new_node) false
+            then ()
+            else (
+              ignore (find_in key preds succs sl);
+              set_next ())
+          in
+          set_next ();
+          if level < top_level then update_levels (level + 1)
+        in
+        update_levels 1;
+        true
+  in
+  repeat ()
 
+(** Returns true if the key is within the skiplist, else returns false *)
 let find sl key =
   let preds = create_dummy_node_array () in
   let succs = create_dummy_node_array () in
   find_in key preds succs sl
 
+(** Returns true if the removal was successful and returns false if the key is not present within the skiplist *)
 let remove sl key =
   let preds = create_dummy_node_array () in
   let succs = create_dummy_node_array () in
