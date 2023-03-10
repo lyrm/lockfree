@@ -83,7 +83,13 @@ let compare_set_mark_ref atomic old_node old_mark node mark =
   let set_mark_ref () =
     Atomic.compare_and_set atomic current { node; marked = mark }
   in
-  current = { node = old_node; marked = old_mark } && set_mark_ref ()
+  match current.node, old_node with 
+  | Some current_node, Some old_node -> (
+    match node with 
+    | Some node -> current_node == old_node && current.marked = old_mark && ((current_node == node && current.marked = mark) || set_mark_ref ())
+    | None -> false
+  )
+  | None,_|_,None -> false
 
 (** Returns true if key is found within the skiplist else false;
     Irrespective of return value, fills the preds and succs array with 
@@ -192,8 +198,8 @@ let remove sl key =
       if not mark then mark_levels succ level
     in
     let rec update_upper_levels level =
-      let succ, _ = get_mark_ref nodeToRemove.next.(level) in
-      mark_levels succ level;
+      let succ, mark = get_mark_ref nodeToRemove.next.(level) in
+      if not mark then mark_levels succ level;
       if level > 1 then update_upper_levels (level - 1)
     in
     let rec update_bottom_level succ =
