@@ -204,6 +204,6 @@ let () =
   let to_alcotest = List.map QCheck_alcotest.to_alcotest in 
   Alcotest.run "Atomic Skip List"
     [
-      (* ("test_sequential",  to_alcotest tests_sequential); *)
+      ("test_sequential",  to_alcotest tests_sequential);
       ("tests_two_domains", to_alcotest tests_two_domains)
     ]

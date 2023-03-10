@@ -137,16 +137,16 @@ let add sl key =
   let top_level = get_random_level () in
   let preds = create_dummy_node_array () in
   let succs = create_dummy_node_array () in
-  let new_node = create_new_node key top_level in
-  for level = 0 to top_level do
-    let succ = succs.(level) in
-    let mark_ref = { node = Some succ; marked = false } in
-    new_node.next.(level) <- Atomic.make mark_ref
-  done;
   let rec repeat () =
     let found = find_in key preds succs sl in
     if found then false
     else
+      let new_node = create_new_node key top_level in
+      for level = 0 to top_level do
+        let succ = succs.(level) in
+        let mark_ref = { node = Some succ; marked = false } in
+        new_node.next.(level) <- Atomic.make mark_ref
+      done;
       let pred = preds.(0) in
       let succ = succs.(0) in
       if
@@ -176,10 +176,34 @@ let add sl key =
   repeat ()
 
 (** Returns true if the key is within the skiplist, else returns false *)
-let find sl key =
-  let preds = create_dummy_node_array () in
-  let succs = create_dummy_node_array () in
-  find_in key preds succs sl
+let find sl key = 
+  let rec search pred curr succ mark level = 
+    assert ((Option.get pred).key < key);
+    Printf.printf "%d " (Option.get curr).key;
+    if mark then
+      let curr = succ in 
+      let succ, mark = get_mark_ref (Option.get curr).next.(level) in 
+      search pred curr succ mark level
+    else 
+      if (Option.get curr).key < key then 
+        let pred = curr in 
+        let curr = get_ref (Option.get pred).next.(level) in 
+        let succ, mark = get_mark_ref (Option.get curr).next.(level) in 
+        search pred curr succ mark level 
+      else 
+        if level > 0 then
+          let level = (level - 1) in 
+          let curr = get_ref (Option.get pred).next.(level) in 
+          let succ, mark = get_mark_ref (Option.get curr).next.(level) in 
+          search pred curr succ mark level 
+        else 
+          (Option.get curr).key == key
+  in
+  let pred = sl.head in 
+  let curr = get_ref pred.next.(max_height) in 
+  let succ, mark = get_mark_ref (Option.get curr).next.(max_height) in 
+  search (Some pred) curr succ mark max_height 
+ 
 
 (** Returns true if the removal was successful and returns false if the key is not present within the skiplist *)
 let remove sl key =
