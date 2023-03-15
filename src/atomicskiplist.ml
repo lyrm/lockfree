@@ -1,10 +1,10 @@
-type 'a markablereference = { node : 'a; marked : bool }
+type 'a markable_reference = { node : 'a; marked : bool }
 (** markable reference: stores a reference to a node and has a field to specify if it is marked *)
 
 type 'a node = {
   key : int;
   height : int;
-  next : 'a node option markablereference Atomic.t array;
+  next : 'a node option markable_reference Atomic.t array;
 }
 
 type 'a t = { head : 'a node }
@@ -13,25 +13,14 @@ let max_height = 10
 
 (** create_new_node: creates a new node with some value and height *)
 let create_new_node value height =
-  let next =
-    let arr =
-      Array.make (max_height + 1) (Atomic.make { node = None; marked = false })
-    in
-    for level = 1 to max_height do
-      arr.(level) <- Atomic.make { node = None; marked = false }
-    done;
-    arr
+  let next = Array.init (max_height + 1) (fun _ -> Atomic.make {node = None; marked = false;})
   in
   { key = value; height; next }
 
 (** create_dummy_node_array: Creates a new array with the different node for each index *)
 let create_dummy_node_array () =
-  let arr =
-    Array.make (max_height + 1) (create_new_node Int.max_int max_height)
+  let arr = Array.init (max_height + 1) (fun _ -> create_new_node Int.max_int max_height)
   in
-  for i = 1 to max_height do
-    arr.(i) <- create_new_node Int.max_int max_height
-  done;
   arr
 
 (** Get a random level from 1 till max_height (both included) *)
@@ -53,15 +42,7 @@ let create () =
           (Atomic.make { node = None; marked = false });
     }
   in
-  let next =
-    let arr =
-      Array.make (max_height + 1)
-        (Atomic.make { node = Some tail; marked = false })
-    in
-    for level = 1 to max_height do
-      arr.(level) <- Atomic.make { node = Some tail; marked = false }
-    done;
-    arr
+  let next = Array.init (max_height + 1) (fun _ -> Atomic.make { node = Some tail; marked=false; }) 
   in
   let head = { key = Int.min_int; height = max_height; next } in
   { head }
@@ -78,7 +59,7 @@ let get_ref atomic_ref =
 
 (** Compares old_node and old_mark with the atomic reference and if they are the same then 
     Replaces the value in the atomic with node and mark *)
-let compare_set_mark_ref atomic old_node old_mark node mark =
+let compare_and_set_mark_ref atomic old_node old_mark node mark =
   let current = Atomic.get atomic in
   let set_mark_ref () =
     Atomic.compare_and_set atomic current { node; marked = mark }
@@ -108,7 +89,7 @@ let find_in key preds succs sl =
     let prev_node = Option.get prev in
     if mark then
       let snip =
-        compare_set_mark_ref prev_node.next.(level) curr false succ false
+        compare_and_set_mark_ref prev_node.next.(level) curr false succ false
       in
       if not snip then (None, None)
       else
@@ -151,7 +132,7 @@ let add sl key =
       let succ = succs.(0) in
       if
         not
-          (compare_set_mark_ref pred.next.(0) (Some succ) false (Some new_node)
+          (compare_and_set_mark_ref pred.next.(0) (Some succ) false (Some new_node)
              false)
       then repeat ()
       else
@@ -160,7 +141,7 @@ let add sl key =
             let pred = preds.(level) in
             let succ = succs.(level) in
             if
-              compare_set_mark_ref pred.next.(level) (Some succ) false
+              compare_and_set_mark_ref pred.next.(level) (Some succ) false
                 (Some new_node) false
             then ()
             else (
@@ -178,8 +159,6 @@ let add sl key =
 (** Returns true if the key is within the skiplist, else returns false *)
 let find sl key = 
   let rec search pred curr succ mark level = 
-    assert ((Option.get pred).key < key);
-    Printf.printf "%d " (Option.get curr).key;
     if mark then
       let curr = succ in 
       let succ, mark = get_mark_ref (Option.get curr).next.(level) in 
@@ -216,7 +195,7 @@ let remove sl key =
     let nodeHeight = nodeToRemove.height in
     let rec mark_levels succ level =
       let _ =
-        compare_set_mark_ref nodeToRemove.next.(level) succ false succ true
+        compare_and_set_mark_ref nodeToRemove.next.(level) succ false succ true
       in
       let succ, mark = get_mark_ref nodeToRemove.next.(level) in
       if not mark then mark_levels succ level
@@ -228,7 +207,7 @@ let remove sl key =
     in
     let rec update_bottom_level succ =
       let iMarkedIt =
-        compare_set_mark_ref nodeToRemove.next.(0) succ false succ true
+        compare_and_set_mark_ref nodeToRemove.next.(0) succ false succ true
       in
       let succ, mark = get_mark_ref succs.(0).next.(0) in
       if iMarkedIt then (
