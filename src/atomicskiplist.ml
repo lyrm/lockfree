@@ -15,7 +15,7 @@ let max_height = 10
 
 (** create_new_node: creates a new node with some value and height *)
 let create_new_node value height =
-  let next = Array.init (max_height + 1) (fun _ -> Atomic.make {node = null_node; marked = false;})
+  let next = Array.init (height + 1) (fun _ -> Atomic.make {node = null_node; marked = false;})
   in
   { key = value; height; next }
 
