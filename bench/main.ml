@@ -9,13 +9,7 @@ let backoff_benchmarks =
 
 let benchmark_list =
   [
-    Bench_spsc_queue.bench;
-    Mpmc_queue.bench ~takers:4 ~pushers:4;
-    Mpmc_queue.bench ~takers:1 ~pushers:8;
-    Mpmc_queue.bench ~takers:8 ~pushers:1;
-    Mpmc_queue.bench ~use_cas:true ~takers:4 ~pushers:4;
-    Mpmc_queue.bench ~use_cas:true ~takers:1 ~pushers:8;
-    Mpmc_queue.bench ~use_cas:true ~takers:8 ~pushers:1;
+    Bench_atomic_skiplist.bench;
   ]
   @ backoff_benchmarks
 

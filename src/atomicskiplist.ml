@@ -61,7 +61,7 @@ let get_ref atomic_ref =
 
 (** Compares old_node and old_mark with the atomic reference and if they are the same then 
     Replaces the value in the atomic with node and mark *)
-let compare_and_set_mark_ref atomic old_node old_mark node mark =
+let compare_and_set_mark_ref (atomic, old_node, old_mark, node, mark) =
   let current = Atomic.get atomic in
   let set_mark_ref () =
     Atomic.compare_and_set atomic current { node; marked = mark }
@@ -82,25 +82,25 @@ let find_in key preds succs sl =
     let succ, mark = get_mark_ref curr.next.(level) in
     (prev, curr, succ, mark)
   in
-  let rec iterate prev curr succ mark level =
+  let rec iterate (prev, curr, succ, mark, level) =
     let prev_node = prev in
     if mark then
       let snip =
-        compare_and_set_mark_ref prev_node.next.(level) curr false succ false
+        compare_and_set_mark_ref (prev_node.next.(level), curr, false, succ, false)
       in
       if not snip then (null_node, null_node)
       else
         let curr = get_ref prev_node.next.(level) in
         let succ, mark = get_mark_ref curr.next.(level) in
-        iterate prev curr succ mark level
+        iterate (prev, curr, succ, mark, level)
     else if curr.key < key then
       let new_succ, mark = get_mark_ref succ.next.(level) in
-      iterate curr succ new_succ mark level
+      iterate (curr, succ, new_succ, mark, level)
     else (prev, curr)
   in
   let rec update_arrays level =
     let prev, curr, succ, mark = init level in
-    let prev, curr = iterate prev curr succ mark level in
+    let prev, curr = iterate (prev, curr, succ, mark, level) in
     if prev == null_node && curr = null_node then update_arrays max_height
     else (
       preds.(level) <- prev;
@@ -129,8 +129,8 @@ let add sl key =
       let succ = succs.(0) in
       if
         not
-          (compare_and_set_mark_ref pred.next.(0) succ false new_node
-             false)
+          (compare_and_set_mark_ref (pred.next.(0), succ, false, new_node,
+             false))
       then repeat ()
       else
         let rec update_levels level =
@@ -138,8 +138,8 @@ let add sl key =
             let pred = preds.(level) in
             let succ = succs.(level) in
             if
-              compare_and_set_mark_ref pred.next.(level) succ false
-                new_node false
+              compare_and_set_mark_ref (pred.next.(level), succ, false,
+                new_node, false)
             then ()
             else (
               ignore (find_in key preds succs sl);
@@ -155,30 +155,30 @@ let add sl key =
 
 (** Returns true if the key is within the skiplist, else returns false *)
 let find sl key = 
-  let rec search pred curr succ mark level = 
+  let rec search (pred, curr, succ, mark, level) = 
     if mark then
       let curr = succ in 
       let succ, mark = get_mark_ref curr.next.(level) in 
-      search pred curr succ mark level
+      search (pred, curr, succ, mark, level)
     else 
       if curr.key < key then 
         let pred = curr in 
         let curr = get_ref pred.next.(level) in 
         let succ, mark = get_mark_ref curr.next.(level) in 
-        search pred curr succ mark level 
+        search (pred, curr, succ, mark, level) 
       else 
         if level > 0 then
           let level = (level - 1) in 
           let curr = get_ref pred.next.(level) in 
           let succ, mark = get_mark_ref curr.next.(level) in 
-          search pred curr succ mark level 
+          search (pred, curr, succ, mark, level) 
         else 
           curr.key == key
   in
   let pred = sl.head in 
   let curr = get_ref pred.next.(max_height) in 
   let succ, mark = get_mark_ref curr.next.(max_height) in 
-  search pred curr succ mark max_height 
+  search (pred, curr, succ, mark, max_height) 
  
 
 (** Returns true if the removal was successful and returns false if the key is not present within the skiplist *)
@@ -192,7 +192,7 @@ let remove sl key =
     let nodeHeight = nodeToRemove.height in
     let rec mark_levels succ level =
       let _ =
-        compare_and_set_mark_ref nodeToRemove.next.(level) succ false succ true
+        compare_and_set_mark_ref (nodeToRemove.next.(level), succ, false, succ, true)
       in
       let succ, mark = get_mark_ref nodeToRemove.next.(level) in
       if not mark then mark_levels succ level
@@ -204,7 +204,7 @@ let remove sl key =
     in
     let rec update_bottom_level succ =
       let iMarkedIt =
-        compare_and_set_mark_ref nodeToRemove.next.(0) succ false succ true
+        compare_and_set_mark_ref (nodeToRemove.next.(0), succ, false, succ, true)
       in
       let succ, mark = get_mark_ref succs.(0).next.(0) in
       if iMarkedIt then (
