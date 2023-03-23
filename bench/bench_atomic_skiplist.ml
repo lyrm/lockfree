@@ -31,7 +31,7 @@ let read_heavy_workload () =
     for i = 0 to (num_elems - 1) do ( 
       if i mod 1000 < 90 then 
         Atomicskiplist.add sl elems.(i) |> ignore
-      else if i mod 1000 > 90 && i mod 1000 < 100 then 
+      else if i mod 1000 >= 90 && i mod 1000 < 100 then 
         Atomicskiplist.remove sl elems.(i) |> ignore
       else 
         Atomicskiplist.find sl elems.(i) |> ignore
@@ -44,14 +44,39 @@ let read_heavy_workload () =
   let end_time = Unix.gettimeofday () in 
   let time_diff = end_time -. (List.nth start_time_threads 0) in 
   time_diff
+  
+  
+  let moderate_heavy_workload () = 
+    let sl = Atomicskiplist.create () in
+    let elems = Array.init num_elems (fun _ -> Random.int 100) in 
+    let push = (fun () -> Domain.spawn ( fun () ->
+      let start_time = Unix.gettimeofday () in 
+      for i = 0 to (num_elems - 1) do ( 
+        if i mod 1000 < 200 then 
+          Atomicskiplist.add sl elems.(i) |> ignore
+        else if i mod 1000 >= 200 && i mod 1000 < 300 then 
+          Atomicskiplist.remove sl elems.(i) |> ignore
+        else 
+          Atomicskiplist.find sl elems.(i) |> ignore
+      )
+      done;
+      start_time
+    )) in 
+    let threads = List.init num_threads (fun _ -> push ()) in 
+    let start_time_threads = List.map (fun domain -> Domain.join domain) threads in 
+    let end_time = Unix.gettimeofday () in 
+    let time_diff = end_time -. (List.nth start_time_threads 0) in 
+    time_diff
+    
 
 
-
-let bench ~workload_type () =
+let bench ~workload_type ~query_type () =
   let workload =
     if workload_type = "read_heavy" then 
       read_heavy_workload
-    else
+    else if workload_type == "moderate_heavy" then 
+      moderate_heavy_workload
+    else 
       write_heavy_workload
     in
   let results = ref [] in
