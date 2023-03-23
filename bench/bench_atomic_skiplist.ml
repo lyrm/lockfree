@@ -1,5 +1,5 @@
 open Lockfree
-let num_elems = 2_000_0
+let num_elems = 200_000
 
 (* A Balanced workload with one thread with reads and another thread with writes (50% adds and 50% removes). *)
 let balanced_workload () = 
@@ -8,10 +8,10 @@ let balanced_workload () =
   let push = Domain.spawn ( fun () ->
     let start_time = Unix.gettimeofday ()  in 
     for i = 0 to (num_elems - 1) do ( 
-      Atomicskiplist.add sl i |> ignore)
-      (* if (i/2) < num_elems/2 then 
-      else
-        Atomicskiplist.remove sl (i - (num_elems/2)) |> ignore) *)
+      if (i/2) < num_elems/2 then 
+        Atomicskiplist.add sl i |> ignore
+    else
+        Atomicskiplist.remove sl (i - (num_elems/2)) |> ignore)
     done;
     start_time
   ) in 

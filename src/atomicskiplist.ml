@@ -35,14 +35,7 @@ let get_random_level () =
 
 (** Create a new skiplist *)
 let create () =
-  let tail =
-    {
-      key = Int.max_int;
-      height = max_height;
-      next =
-        Array.make (max_height + 1)
-          (Atomic.make { node = null_node; marked = false });
-    }
+  let tail = create_new_node Int.max_int max_height
   in
   let next = Array.init (max_height + 1) (fun _ -> Atomic.make { node = tail; marked=false; }) 
   in
@@ -74,7 +67,7 @@ let compare_and_set_mark_ref (atomic, old_node, old_mark, node, mark) =
     the predecessors nodes with smaller key and successors nodes with greater than 
     or equal to key 
   *)
-let find_in key preds succs sl =
+let find_in (key, preds, succs, sl) =
   let head = sl.head in
   let init level =
     let prev = head in
@@ -83,14 +76,13 @@ let find_in key preds succs sl =
     (prev, curr, succ, mark)
   in
   let rec iterate (prev, curr, succ, mark, level) =
-    let prev_node = prev in
     if mark then
       let snip =
-        compare_and_set_mark_ref (prev_node.next.(level), curr, false, succ, false)
+        compare_and_set_mark_ref (prev.next.(level), curr, false, succ, false)
       in
       if not snip then (null_node, null_node)
       else
-        let curr = get_ref prev_node.next.(level) in
+        let curr = get_ref prev.next.(level) in
         let succ, mark = get_mark_ref curr.next.(level) in
         iterate (prev, curr, succ, mark, level)
     else if curr.key < key then
@@ -101,7 +93,7 @@ let find_in key preds succs sl =
   let rec update_arrays level =
     let prev, curr, succ, mark = init level in
     let prev, curr = iterate (prev, curr, succ, mark, level) in
-    if prev == null_node && curr = null_node then update_arrays max_height
+    if prev == null_node && curr == null_node then update_arrays max_height
     else (
       preds.(level) <- prev;
       succs.(level) <- curr;
@@ -116,14 +108,14 @@ let add sl key =
   let preds = create_dummy_node_array () in
   let succs = create_dummy_node_array () in
   let rec repeat () =
-    let found = find_in key preds succs sl in
+    let found = find_in (key, preds, succs, sl) in
     if found then false
     else
       let new_node = create_new_node key top_level in
       for level = 0 to top_level do
         let succ = succs.(level) in
         let mark_ref = { node = succ; marked = false } in
-        new_node.next.(level) <- Atomic.make mark_ref
+        Atomic.set new_node.next.(level) mark_ref
       done;
       let pred = preds.(0) in
       let succ = succs.(0) in
@@ -142,7 +134,7 @@ let add sl key =
                 new_node, false)
             then ()
             else (
-              ignore (find_in key preds succs sl);
+              find_in (key, preds, succs, sl) |> ignore;
               set_next ())
           in
           set_next ();
@@ -185,7 +177,7 @@ let find sl key =
 let remove sl key =
   let preds = create_dummy_node_array () in
   let succs = create_dummy_node_array () in
-  let found = find_in key preds succs sl in
+  let found = find_in (key, preds, succs, sl) in
   if not found then false
   else
     let nodeToRemove = succs.(0) in
@@ -208,7 +200,7 @@ let remove sl key =
       in
       let succ, mark = get_mark_ref succs.(0).next.(0) in
       if iMarkedIt then (
-        ignore (find_in key preds succs sl);
+        find_in (key, preds, succs, sl) |> ignore;
         true)
       else if mark then false
       else update_bottom_level succ
