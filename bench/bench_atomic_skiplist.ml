@@ -25,7 +25,7 @@ let write_heavy_workload () =
 (* A regular workload with 90% reads, 9% adds and 1% removes. *)
 let read_heavy_workload () = 
   let sl = Atomicskiplist.create () in
-  let elems = Array.init num_elems (fun _ -> Random.int 100) in 
+  let elems = Array.init num_elems (fun _ -> Random.int 10000) in 
   let push = (fun () -> Domain.spawn ( fun () ->
     let start_time = Unix.gettimeofday () in 
     for i = 0 to (num_elems - 1) do ( 
@@ -48,7 +48,7 @@ let read_heavy_workload () =
   
   let moderate_heavy_workload () = 
     let sl = Atomicskiplist.create () in
-    let elems = Array.init num_elems (fun _ -> Random.int 100) in 
+    let elems = Array.init num_elems (fun _ -> Random.int 10000) in 
     let push = (fun () -> Domain.spawn ( fun () ->
       let start_time = Unix.gettimeofday () in 
       for i = 0 to (num_elems - 1) do ( 
@@ -70,7 +70,7 @@ let read_heavy_workload () =
     
 
 
-let bench ~workload_type ~query_type () =
+let bench ~workload_type () =
   let workload =
     if workload_type = "read_heavy" then 
       read_heavy_workload
