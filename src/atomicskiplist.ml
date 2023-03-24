@@ -69,8 +69,8 @@ let compare_and_set_mark_ref (atomic, old_node, old_mark, node, mark) =
   *)
 let find_in (key, preds, succs, sl) =
   let head = sl.head in
-  let init level =
-    let prev = head in
+  let init prev level =
+    let prev = prev in
     let curr = get_ref prev.next.(level) in
     let succ, mark = get_mark_ref curr.next.(level) in
     (prev, curr, succ, mark)
@@ -90,17 +90,22 @@ let find_in (key, preds, succs, sl) =
       iterate (curr, succ, new_succ, mark, level)
     else (prev, curr)
   in
-  let rec update_arrays level =
-    let prev, curr, succ, mark = init level in
+  let rec update_arrays prev level =
+    let prev, curr, succ, mark = 
+      if level == max_height then 
+        init head level 
+      else
+        init prev level
+    in 
     let prev, curr = iterate (prev, curr, succ, mark, level) in
-    if prev == null_node && curr == null_node then update_arrays max_height
+    if prev == null_node && curr == null_node then update_arrays null_node max_height
     else (
       preds.(level) <- prev;
       succs.(level) <- curr;
-      if level > 0 then update_arrays (level - 1)
+      if level > 0 then update_arrays prev (level - 1)
       else curr.key == key)
   in
-  update_arrays max_height
+  update_arrays null_node max_height
 
 (** Adds a new key to the skiplist sl. *)
 let add sl key =

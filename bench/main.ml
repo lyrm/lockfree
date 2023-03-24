@@ -17,6 +17,7 @@ let benchmark_list =
     Mpmc_queue.bench ~use_cas:true ~takers:1 ~pushers:8;
     Mpmc_queue.bench ~use_cas:true ~takers:8 ~pushers:1;
     Bench_atomic_skiplist.bench ~workload_type:"read_heavy";
+    Bench_atomic_skiplist.bench ~workload_type:"moderate_heavy";
   ]
   @ backoff_benchmarks
 
