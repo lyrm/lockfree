@@ -139,29 +139,31 @@ let () =
   let open Alcotest in
   run "Mpmc_queue"
     (let open Mpmc_relaxed_queue.Not_lockfree in
-    [
-      ( "single-thread",
-        [ test_case "is it a queue" `Quick (smoke_test (push, pop)) ] );
-      ( "validate items",
-        [ test_case "1 prod. 1 cons." `Quick (two_threads_test (push, pop)) ] );
-      ( "validate indices under load",
-        [
-          test_case " 4 prod. 4 cons." `Slow (run_test 4 4);
-          test_case " 8 prod. 1 cons." `Slow (run_test 8 1);
-          test_case " 1 prod. 8 cons." `Slow (run_test 1 8);
-        ] );
-    ]
-    @
-    let open Mpmc_relaxed_queue.Not_lockfree.CAS_interface in
-    [
-      ( "single-thread-CAS-intf",
-        [ test_case "is it a queue" `Quick (smoke_test (push, pop)) ] );
-      ( "validate items-CAS-intf",
-        [ test_case "1 prod. 1 cons." `Quick (two_threads_test (push, pop)) ] );
-    ]
-    @ [
-        ( "single-thread-spinning",
-          [ test_case "is it a queue" `Quick smoke_test_spinning ] );
-        ( "validate-items-spinning",
-          [ test_case "1 prod. 1 cons" `Quick two_threads_spin_test ] );
-      ])
+     [
+       ( "single-thread",
+         [ test_case "is it a queue" `Quick (smoke_test (push, pop)) ] );
+       ( "validate items",
+         [ test_case "1 prod. 1 cons." `Quick (two_threads_test (push, pop)) ]
+       );
+       ( "validate indices under load",
+         [
+           test_case " 4 prod. 4 cons." `Slow (run_test 4 4);
+           test_case " 8 prod. 1 cons." `Slow (run_test 8 1);
+           test_case " 1 prod. 8 cons." `Slow (run_test 1 8);
+         ] );
+     ]
+     @
+     let open Mpmc_relaxed_queue.Not_lockfree.CAS_interface in
+     [
+       ( "single-thread-CAS-intf",
+         [ test_case "is it a queue" `Quick (smoke_test (push, pop)) ] );
+       ( "validate items-CAS-intf",
+         [ test_case "1 prod. 1 cons." `Quick (two_threads_test (push, pop)) ]
+       );
+     ]
+     @ [
+         ( "single-thread-spinning",
+           [ test_case "is it a queue" `Quick smoke_test_spinning ] );
+         ( "validate-items-spinning",
+           [ test_case "1 prod. 1 cons" `Quick two_threads_spin_test ] );
+       ])

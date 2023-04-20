@@ -1,5 +1,6 @@
-type 'a t
-val create : unit -> 'a t
-val find: 'a t -> int ->bool
-val add: 'a t -> int -> bool
-val remove: 'a t -> int -> bool
+type t
+
+val create : int -> t
+val mem : t -> int -> bool
+val add : t -> int -> bool
+val remove : t -> int -> bool
