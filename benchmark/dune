@@ -1,0 +1,9 @@
+(executable
+ (name test_skiplist)
+ (libraries lockfree unix)
+ (modules test_skiplist))
+
+(executable
+ (name test_mem)
+ (libraries lockfree unix)
+ (modules test_mem))

@@ -33,3 +33,4 @@ module Michael_scott_queue = Michael_scott_queue
 module Backoff = Backoff
 module Mpmc_relaxed_queue = Mpmc_relaxed_queue
 module Atomicskiplist = Atomicskiplist
+module Atomicskiplist3 = Atomicskiplist3
