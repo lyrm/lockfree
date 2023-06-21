@@ -18,22 +18,28 @@ module type S = sig
   (** Type of work-stealing queue *)
 
   val create : unit -> 'a t
-  (** Returns a fresh empty work-stealing queue *)
+  (** [create ()] returns a new empty work-stealing queue. *)
+
+  (** {1 Queue owner functions} *)
 
   val push : 'a t -> 'a -> unit
-  (** [push q v] pushes [v] to the front of the queue.
+  (** [push t v] adds [v] to the front of the queue [q].
       It should only be invoked by the domain which owns the queue [q]. *)
 
   val pop : 'a t -> 'a
-  (** [pop q] removes an element [e] from the front of the queue and returns
-      it. It should only be invoked by the domain which owns the queue [q].
+  (** [pop q] removes and returns the first element in queue
+      [q].It should only be invoked by the domain which owns the queue
+      [q].
 
       @raise [Exit] if the queue is empty.
       *)
 
+  (** {1 Stealers function} *)
+
   val steal : 'a t -> 'a
-  (** [steal q] removes an element from the back of the queue and returns
-      it. It should only be invoked by domain which doesn't own the queue [q].
+  (** [steal q] removes and returns the last element from queue
+      [q]. It should only be invoked by domain which doesn't own the
+      queue [q].
 
       @raise [Exit] if the queue is empty.
       *)
