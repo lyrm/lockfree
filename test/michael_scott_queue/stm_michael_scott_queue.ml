@@ -2,7 +2,7 @@
 
 open QCheck
 open STM
-module Ms_queue = Lockfree.Michael_scott_queue
+module Ms_queue = Lockfree.Queue
 
 module MSQConf = struct
   type cmd = Push of int | Pop | Is_empty

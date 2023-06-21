@@ -3,7 +3,7 @@
 open QCheck
 open STM
 open Util
-module Ws_deque = Lockfree.Ws_deque
+module Ws_deque = Lockfree.Work_stealing_deque
 
 module WSDConf = struct
   type cmd = Push of int | Pop | Steal

@@ -1,4 +1,4 @@
-open Lockfree
+module Spsc_queue = Lockfree.Single_prod_single_cons_queue
 (** Tests *)
 
 let test_empty () =

@@ -3,7 +3,7 @@
 open QCheck
 open STM
 open Util
-module Mpsc_queue = Lockfree.Mpsc_queue
+module Mpsc_queue = Lockfree.Single_consumer_queue
 
 module MPSCConf = struct
   type cmd = Push of int | Pop | Push_head of int | Is_empty | Close

@@ -2,7 +2,7 @@
 
 open QCheck
 open STM
-module Treiber_stack = Lockfree.Treiber_stack
+module Treiber_stack = Lockfree.Stack
 
 module TSConf = struct
   type cmd = Push of int | Pop | Is_empty
