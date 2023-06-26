@@ -5,7 +5,7 @@ let create_test ~shift_by () =
   (* shift the queue, that helps testing overlap handling *)
   for _ = 1 to shift_by do
     Spsc_queue.push queue (-1);
-    assert (Option.is_some (Spsc_queue.pop queue))
+    assert (Option.is_some (Spsc_queue.pop_opt queue))
   done;
 
   (* enqueuer *)
@@ -18,7 +18,7 @@ let create_test ~shift_by () =
   let dequeued = ref 0 in
   Atomic.spawn (fun () ->
       for _ = 1 to items_count + 1 do
-        match Spsc_queue.pop queue with
+        match Spsc_queue.pop_opt queue with
         | None -> ()
         | Some v ->
             assert (v = !dequeued + 1);
@@ -44,7 +44,7 @@ let size_linearizes_with_1_thr () =
 
       let size = ref 0 in
       Atomic.spawn (fun () ->
-          assert (Option.is_some (Spsc_queue.pop queue));
+          assert (Option.is_some (Spsc_queue.pop_opt queue));
           size := Spsc_queue.size queue);
 
       Atomic.final (fun () -> Atomic.check (fun () -> 1 <= !size && !size <= 5)))
