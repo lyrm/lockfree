@@ -15,7 +15,7 @@ A collection of paralallelism-safe data structures for OCaml 5. It contains:
 
 ## Usage
 
-lockfree can be installed from `opam`: `opam install lockfree`. Sample usage of
+saturn can be installed from `opam`: `opam install saturn`. Sample usage of
 `Ws_deque` is illustrated below.
 
 ```ocaml
@@ -58,5 +58,5 @@ There is a number of benchmarks in `bench` directory. You can run them with
 
 ## Contributing
 
-Contributions of more lockfree data structures appreciated! Please create
+Contributions of more parallelism-safe data structures appreciated! Please create
 issues/PRs to this repo.

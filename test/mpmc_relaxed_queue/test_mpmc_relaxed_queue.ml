@@ -1,4 +1,4 @@
-open Lockfree
+open Saturn
 
 let smoke_test (push, pop) () =
   let queue = Relaxed_queue.create ~size_exponent:2 () in

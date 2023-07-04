@@ -1,4 +1,4 @@
-open Lockfree.Queue
+open Saturn.Queue
 
 let tests_sequential =
   QCheck.

@@ -1,4 +1,4 @@
-Benchmarks for lockfree
+Benchmarks for saturn
 
 # General usage
 
