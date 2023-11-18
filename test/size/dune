@@ -1,0 +1,30 @@
+(library
+ (name linked_set)
+ (modules linked_set))
+
+(rule
+ (progn
+  (copy ../../src_lockfree/bits.ml bits.ml)
+  (copy ../../src_lockfree/size.ml size.ml)))
+
+(test
+ (name dscheck_size)
+ (modules dscheck_size size bits)
+ (libraries
+  atomic
+  transparent_atomic
+  linked_set
+  dscheck
+  alcotest
+  multicore-magic))
+
+(test
+ (name stm_size)
+ (modules stm_size)
+ (libraries
+  saturn_lockfree
+  linked_set
+  qcheck-stm.sequential
+  qcheck-stm.domain)
+ (action
+  (run %{test} --verbose)))

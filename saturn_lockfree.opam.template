@@ -1,0 +1,3 @@
+pin-depends: [
+  [ "multicore-magic.dev" "git+https://github.com/ocaml-multicore/multicore-magic#dd9d8928fba7ab5dedef612a96bf01bd17cbd275" ]
+]

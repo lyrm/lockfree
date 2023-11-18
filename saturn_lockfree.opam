@@ -11,6 +11,7 @@ depends: [
   "dune" {>= "3.2"}
   "ocaml" {>= "4.12"}
   "domain_shims" {>= "0.1.0"}
+  "multicore-magic" {>= "2.1.0"}
   "alcotest" {>= "1.7.0" & with-test}
   "qcheck" {>= "0.18.1" & with-test}
   "qcheck-stm" {>= "0.2" & with-test}
@@ -34,3 +35,6 @@ build: [
   ]
 ]
 dev-repo: "git+https://github.com/ocaml-multicore/saturn.git"
+pin-depends: [
+  [ "multicore-magic.dev" "git+https://github.com/ocaml-multicore/multicore-magic#dd9d8928fba7ab5dedef612a96bf01bd17cbd275" ]
+]
