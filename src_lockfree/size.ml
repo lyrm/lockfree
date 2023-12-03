@@ -94,8 +94,8 @@ type _ state =
 let used_index = 0
 
 type tx = { value : int; once : [ `Open ] state }
+type t = tx Atomic.t array Atomic.t
 
-type t = tx Atomic.t array
 (** We use an optimized flat representation where the first element of the array
     holds a reference to the snapshot and the other elements are the counters.
 
@@ -108,32 +108,20 @@ type t = tx Atomic.t array
 
     A counter refers to a unique [tx] record. *)
 
-let[@inline] snapshot_of (t : t) : Snapshot.t Atomic.t =
-  Obj.magic (Array.unsafe_get t 0)
+let[@inline] snapshot_of txs : Snapshot.t Atomic.t =
+  Obj.magic (Array.unsafe_get txs 0)
 
 (* *)
 
 let zero = { value = 0; once = Open { index = used_index } }
 
-let n_way_max =
-  Int.min
-    (Domain.recommended_domain_count () * 2)
-    (Bits.floor_pow_2 ((Sys.max_array_length - 1) lsr 1))
-  |> Bits.ceil_pow_2
-
-let n_way_default = n_way_max |> Int.min 8
-
-let create ?n_way () =
-  let n_way =
-    match n_way with
-    | None -> n_way_default
-    | Some n_way -> n_way |> Int.max 1 |> Int.min n_way_max |> Bits.ceil_pow_2
-  in
-  Array.init ((n_way * 2) + 1) @@ fun i ->
-  Atomic.make (if i = 0 then Obj.magic Snapshot.zero else zero)
-  |> Multicore_magic.copy_as_padded
-
-let n_way_of t = (Array.length t - 1) lsr 1
+let create () =
+  Array.init
+    ((1 * 2) + 1)
+    (fun i ->
+      Atomic.make (if i = 0 then Obj.magic Snapshot.zero else zero)
+      |> Multicore_magic.copy_as_padded)
+  |> Atomic.make |> Multicore_magic.copy_as_padded
 
 (* *)
 
@@ -153,16 +141,34 @@ type update = int
 let decr = 1
 let incr = 2
 
+(** TODO:
+    - Limit array length to [Domain.recommended_domain_count ()].
+    - CPUs do not necessarily have power of two number of cores. *)
+
+let rec new_once t update =
+  let index = (Multicore_magic.instantaneous_domain_index () * 2) + update in
+  let txs = Atomic.fenceless_get t in
+  let n = Array.length txs in
+  if index < n then Once (Open { index })
+  else
+    let txs_new =
+      Array.init ((n * 2) - 1) @@ fun i ->
+      if i = 0 then
+        Obj.magic (Multicore_magic.copy_as_padded @@ Atomic.make Snapshot.zero)
+      else if i < n then Array.unsafe_get txs i
+      else Multicore_magic.copy_as_padded (Atomic.make zero)
+    in
+    Atomic.compare_and_set t txs txs_new |> ignore;
+    new_once t update
+
 let new_once t update =
-  let mask = Array.length t - 3 in
-  let index =
-    (Multicore_magic.instantaneous_domain_index () * 2 land mask) + update
-  in
-  Once (Open { index })
+  let index = (Multicore_magic.instantaneous_domain_index () * 2) + update in
+  let txs = Atomic.fenceless_get t in
+  if index < Array.length txs then Once (Open { index }) else new_once t update
 
 (* *)
 
-let rec update_once t once counter =
+let rec update_once txs once counter =
   let before = Atomic.get counter in
   let index = get_index once in
   let before_once = before.once in
@@ -171,11 +177,11 @@ let rec update_once t once counter =
     let value = (before.value + 1) land max_value in
     let after = { value; once } in
     if Atomic.compare_and_set counter before after then begin
-      let snapshot = Atomic.get (snapshot_of t) in
+      let snapshot = Atomic.get (snapshot_of txs) in
       if Snapshot.is_collecting snapshot then
         Snapshot.forward snapshot index value
     end
-    else update_once t once (Array.unsafe_get t index)
+    else update_once txs once (Array.unsafe_get txs index)
   end
 
 let update_once t once =
@@ -183,27 +189,31 @@ let update_once t once =
   | Once Used -> ()
   | Once (Open _ as once) ->
       let index = get_index once in
-      if index != used_index then update_once t once (Array.unsafe_get t index)
+      if index != used_index then
+        let txs = Atomic.fenceless_get t in
+        update_once txs once (Array.unsafe_get txs index)
 
 (* *)
 
-let get_collecting_snapshot t =
-  let snapshot = snapshot_of t in
+let get_collecting_snapshot txs =
+  let snapshot = snapshot_of txs in
   let before = Atomic.get snapshot in
   if Snapshot.is_collecting before then before
   else
-    let after = Snapshot.create (Array.length t) in
+    let after = Snapshot.create (Array.length txs) in
     if Atomic.compare_and_set snapshot before after then after
     else Atomic.get snapshot
 
-let rec collect t snapshot i =
+let rec collect txs snapshot i =
   if 0 < i then begin
-    let after = Atomic.get (Array.unsafe_get t i) in
+    let after = Atomic.get (Array.unsafe_get txs i) in
     Snapshot.set snapshot i after.value;
-    collect t snapshot (i - 1)
+    collect txs snapshot (i - 1)
   end
 
-let get t =
-  let snapshot = get_collecting_snapshot t in
-  collect t snapshot (Array.length t - 1);
-  Snapshot.compute snapshot
+let rec get t =
+  let txs = Atomic.fenceless_get t in
+  let snapshot = get_collecting_snapshot txs in
+  collect txs snapshot (Array.length txs - 1);
+  let size = Snapshot.compute snapshot in
+  if Atomic.fenceless_get t == txs then size else get t

@@ -10,7 +10,7 @@ module Make (Atomic : sig
 end) (Size : sig
   type t
 
-  val create : ?n_way:int -> unit -> t
+  val create : unit -> t
   val get : t -> int
 
   type once

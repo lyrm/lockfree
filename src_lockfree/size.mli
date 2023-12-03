@@ -107,20 +107,9 @@
 type t
 (** The type of a size counter. *)
 
-val create : ?n_way:int -> unit -> t
+val create : unit -> t
 (** [create ()] allocates a new size counter.  The initial value of the size
-    counter will be [0].
-
-    The optional [n_way] argument can be used to specify a desired level of
-    parallelism, i.e. maximum number of non-interfering parallel updates.  The
-    default value is chosen to strike a balance between scalability and memory
-    use and a given value may be adjusted by the implementation. *)
-
-val n_way_of : t -> int
-(** [n_way_of size] returns the maximum number of non-interfering parallel
-    updates supported by the [size] counter.
-
-    NOTE: The returned value may not be the same as given to {!create}. *)
+    counter will be [0]. *)
 
 type once
 (** The type of an at most once update of a size counter. *)
@@ -148,9 +137,6 @@ val update_once : t -> once -> unit
 (** [update_once size once] performs the update, increment or decrement, of the
     [size] counter at most [once].
 
-    The update is done in a lock-free manner.  The [n_way] argument given to
-    {!create} can be used to adjust the likelihood of contention.
-
     ⚠️ The [once] update must be either {!used_once} or must have been created by
     {!new_once} with the same [size] counter. *)
 
@@ -163,6 +149,4 @@ val get : t -> int
 
     The computation is done in a wait-free manner, which means that parallel
     updates of the size counter cannot force [get size] to starve nor can
-    parallel computations of the size force counter updates to starve.  The size
-    computation will take time proportional to the [n_way] argument as
-    interpreted by {!create}. *)
+    parallel computations of the size force counter updates to starve. *)

@@ -1,14 +1,5 @@
 open Linked_set.Make (Atomic) (Size)
 
-let test_n_way_of () =
-  let rec loop n_way =
-    let s = Size.create ~n_way () in
-    assert (Size.n_way_of s = n_way);
-    let n_way = n_way * 2 in
-    if n_way <= Domain.recommended_domain_count () then loop n_way
-  in
-  loop 1
-
 let test_underflow_and_overflow () =
   let s = Size.create () in
   assert (Size.get s = 0);
@@ -98,7 +89,6 @@ let () =
     [
       ( "basic",
         [
-          Alcotest.test_case "n_way_of" `Quick test_n_way_of;
           Alcotest.test_case "underflow and overflow" `Quick
             test_underflow_and_overflow;
           Alcotest.test_case "2-mem" `Slow two_mem;
