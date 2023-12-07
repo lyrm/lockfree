@@ -36,3 +36,4 @@ module Single_prod_single_cons_queue =
 module Single_consumer_queue = Saturn_lockfree.Single_consumer_queue
 module Relaxed_queue = Mpmc_relaxed_queue
 module Backoff = Saturn_lockfree.Backoff
+module Linked_list = Saturn_lockfree.Linked_list

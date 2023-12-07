@@ -34,3 +34,4 @@ module Single_consumer_queue = Mpsc_queue
 module Relaxed_queue = Mpmc_relaxed_queue
 module Backoff = Backoff
 module Size = Size
+module Linked_list = Llist
