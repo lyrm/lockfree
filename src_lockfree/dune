@@ -10,6 +10,7 @@ let () =
 (library
  (name saturn_lockfree)
  (public_name saturn_lockfree)
+ (library_flags (-linkall))
  (libraries backoff multicore-magic |}
   ^ maybe_threads
   ^ {| ))

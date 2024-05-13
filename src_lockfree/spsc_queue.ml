@@ -103,3 +103,5 @@ let peek { array; head; tail; mask; _ } =
     match v with None -> assert false | Some v -> v
 
 let size { head; tail; _ } = Atomic.get tail - Atomic.get head
+
+let _ = print_endline "Spsc_queue linked"

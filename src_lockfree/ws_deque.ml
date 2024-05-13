@@ -187,3 +187,5 @@ module M : S = struct
   let steal q = steal Backoff.default q
   let steal_opt q = try Some (steal q) with Exit -> None
 end
+
+let _ = print_endline "Ws deque linked"

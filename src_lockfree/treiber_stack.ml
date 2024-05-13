@@ -29,3 +29,5 @@ let rec pop_as : type a r. a t -> Backoff.t -> (a, r) poly -> r =
 
 let pop t = pop_as t Backoff.default Value
 let pop_opt t = pop_as t Backoff.default Option
+
+let _ = print_endline "Treiber stack linked"

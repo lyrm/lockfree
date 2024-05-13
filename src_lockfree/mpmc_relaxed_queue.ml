@@ -132,3 +132,5 @@ let pop { array; head; mask; _ } =
     item := Atomic.get cell
   done;
   Option.get !item
+
+  let _ = print_endline "Relaxed queue linked"

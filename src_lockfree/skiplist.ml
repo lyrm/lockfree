@@ -353,3 +353,5 @@ let try_remove t key =
 (* *)
 
 let length t = Size.get t.size
+
+let _ = print_endline "Skiplist linked"

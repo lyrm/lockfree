@@ -150,3 +150,5 @@ let is_empty t =
 let create () =
   let dummy = { Node.value = Obj.magic (); next = Atomic.make Node.none } in
   { tail = Atomic.make dummy; head = dummy }
+
+  let _ = print_endline "Mpsc_queue linked"

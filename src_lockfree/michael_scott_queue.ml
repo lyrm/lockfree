@@ -93,3 +93,5 @@ type 'a cursor = 'a node
 
 let snapshot { head; _ } = Atomic.get (Atomic.get head)
 let next = function Nil -> None | Next (a, n) -> Some (a, Atomic.get n)
+
+let _ = print_endline "TEST Michael_scott_queue linked"
