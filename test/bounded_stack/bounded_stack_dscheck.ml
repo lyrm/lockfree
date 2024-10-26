@@ -204,7 +204,7 @@ let two_domains_more_pop () =
           Atomic.spawn (fun () ->
               List.iter
                 (fun elt ->
-                  Stack.push stack elt;
+                  Stack.try_push stack elt |> ignore;
                   lpop := Stack.pop_opt stack :: !lpop;
                   lpop := Stack.pop_opt stack :: !lpop)
                 lpush)

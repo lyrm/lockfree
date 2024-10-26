@@ -17,37 +17,100 @@ val is_empty : 'a t -> bool
 (** [is_empty stack] returns [true] if the [stack] is empty, otherwise [false]. *)
 
 (** {2 Consumer functions} *)
-val peek : 'a t -> 'a
-(** [peek stack] returns the top element of the [stack] without removing it. If 
-the stack is empty, the domain will be suspended until another domain successfully 
-push another element in the stack with [push] or [push_opt] . *)
+
+exception Empty
+(** Raised when {!push_exn} or {!peek_exn} is applied to an empty stack.
+
+  This exception is meant to avoid allocations required by an option type.
+  As such, it does not register backtrace information and it is recommended to 
+  use the following pattern to catch it.
+
+  {[
+    match pop_exn s with
+      | value -> (* ... *)
+      | exception Empty -> (* ... *)
+  ]} *)
+
+val peek_exn : 'a t -> 'a
+(** [peek_exn stack] returns the top element of the [stack] without removing it.
+    
+  @raises Empty if the [stack] is empty. *)
 
 val peek_opt : 'a t -> 'a option
 (** [peek_opt stack] returns [Some] of the top element of the [stack] without
-    removing it, or [None] if the stack is empty. *)
+    removing it, or [None] if the [stack] is empty. *)
 
-val pop : 'a t -> 'a
-(** [pop stack] removes and returns the top element of the [stack].
-    Raises an exception if the stack is empty. *)
+val pop_exn : 'a t -> 'a
+(** [pop_exn stack] removes and returns the top element of the [stack].
+ 
+  @raises Empty if the stack [s] is empty. *)
 
 val pop_opt : 'a t -> 'a option
 (** [pop_opt stack] removes and returns [Some] of the top element of the [stack],
     or [None] if the stack is empty. *)
 
 val pop_all : 'a t -> 'a list
-(** [pop_all stack] removes and returns all elements of the [stack] in the reverse 
-order they were pushed. *)
+(** [pop_all stack] removes and returns all elements of the [stack] in the LIFO 
+order. 
+
+  {[
+    # let t : int Saturn.Bounded_stack.t =
+     Saturn.Bounded_stack.create ()
+    val t : int Saturn.Bounded_stack.t = <abstr>
+    # Saturn.Bounded_stack.try_push t 1
+    - : bool = true
+    # Saturn.Bounded_stack.try_push t 2
+    - : bool = true
+    # Saturn.Bounded_stack.try_push t 3
+    - : bool = true
+    # Saturn.Bounded_stack.pop_all t
+    - : int list = Some [3; 2; 1]
+  ]}
+*)
+
+val to_seq : 'a t -> 'a Seq.t
+(** [to_seq stack] returns a sequence of all elements of the [stack] in the LIFO
+order. Equivalent to {[ pop_all stack |> List.to_seq ]} *)
 
 (** {2 Producer functions} *)
 
-val push : 'a t -> 'a -> unit
-(** [push stack element] adds [element] to the top of the [stack].
-    Raises an exception if the stack is full. *)
+exception Full
+(** Raised when {!push_exn} is applied to a full stack. *)
+
+val push_exn : 'a t -> 'a -> unit
+(** [push_exn stack element] adds [element] to the top of the [stack].
+    
+  @raises Full if the stack [s] is full. *)
 
 val try_push : 'a t -> 'a -> bool
 (** [try_push stack element] tries to add [element] to the top of the [stack].
     Returns [true] if the element was successfully added, or [false] if the
     stack is full. *)
+
+val push_all_exn : 'a t -> 'a list -> unit
+(** [push_exn stack elements] adds all [elements] to the top of the [stack].
+    
+  @raises Full if the stack [s] is full. *)
+
+val try_push_all : 'a t -> 'a list -> bool
+(** [try_push stack elements] tries to add all [elements] to the top of the [stack].
+    Returns [true] if the element was successfully added, or [false] if the
+    stack is full. 
+    
+  {[
+    # let t : int Saturn.Bounded_stack.t =
+     Saturn.Bounded_stack.create ()
+    val t : int Saturn.Bounded_stack.t = <abstr>
+    # Saturn.Bounded_stack.try_push_all t [1; 2; 3; 4]
+    - : bool = true
+    # Saturn.Bounded_stack.pop_opt t
+    - : int option = Some 4
+    # Saturn.Bounded_stack.pop_opt t 
+    - : int option = Some 3
+    # Saturn.Bounded_stack.pop_all t
+    - : int list = Some [2; 1]
+  ]}
+    *)
 
 (** {1 Examples}
     An example top-level session:
@@ -57,57 +120,19 @@ val try_push : 'a t -> 'a -> bool
       val t : int Saturn.Bounded_stack.t = <abstr>
       # Saturn.Bounded_stack.try_push t 42
       - : bool = true
-      # Saturn.Bounded_stack.push t 1
+      # Saturn.Bounded_stack.push_exn t 1
       - : unit = ()
-      # Saturn.Bounded_stack.pop t
+      # Saturn.Bounded_stack.pop_exn t
       - : int = 1
       # Saturn.Bounded_stack.peek_opt t
       - : int option = Some 42
       # Saturn.Bounded_stack.pop_opt t
       - : int option = Some 42 
       # Saturn.Bounded_stack.pop_opt t
-      - : int option = None ]}
+      - : int option = None
+      # Saturn.Bounded_stack.pop_exn t
+      Exception: Bounded_stack.Empty.]}
 
     A multicore example: 
-    {[
-    open Saturn_lockfree
-    open Picos_std_structured
-
-    let main () =
-      let st = Bounded_stack.create ~capacity:2 () in
-      let popped = Bounded_stack.create ~capacity:Int.max_int () in
-      Flock.join_after
-        begin
-          fun () ->
-            for i = 0 to 2 lsl 5 - 1 do
-              Flock.fork @@ fun () ->
-              begin
-                if i/4 mod 2 = 0 then (* 4 pushes followed by 4 pops *)
-                  let id = (Domain.self () :> int) in
-                  Bounded_stack.push st id
-                else Bounded_stack.pop st |> Bounded_stack.push popped 
-               (* stores the result of pop in popped *)
-              end;
-              Unix.sleepf (Random.float 0.1)
-            done
-        end;
-    assert (Bounded_stack.pop_all st = []);
-    Bounded_stack.pop_all popped |> List.rev
-
-    let run () =
-      Picos_mux_multififo.run_on ~n_domains:4 main
-    ]}
-    This example uses Picos' prefined {{:https://ocaml-multicore.github.io/picos/doc/picos_mux/Picos_mux_multififo/index.html}multi-threaded scheduler}
-    to run four domains that are alternatively pushing their ids and popping in
-    a shared stack with a capacity of 2 elements. The returned list is the 
-    pusher's ids in order. Note that with this scheduler, a maximum of 4 domains 
-    can be used in parallel and each domain can spawn multiple fibers, meaning 
-    even if run in a single domain, this example will not block indefinitely.
-
-    {[ 
-    # run ();;
-    - : int list =
-    [5; 4; 6; 6; 4; 5; 4; 0; 6; 5; 6; 4; 0; 5; 4; 5; 0; 5; 6; 5; 5; 0; 5; 4;
-     4; 0; 0; 0; 0; 0; 0; 0]
-    ]}
+ 
     *)

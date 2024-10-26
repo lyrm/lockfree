@@ -1,156 +1,113 @@
-open Picos
-
 type 'a node = Nil | Cons of { value : 'a; tail : 'a node; capacity : int }
-
-type 'a t = {
-  head : 'a node Atomic.t;
-  cons_waiters : Trigger.t list Atomic.t;
-  prod_waiters : Trigger.t list Atomic.t;
-  capacity : int;
-}
+type 'a t = { head : 'a node Atomic.t; capacity : int }
 
 let create ?(capacity = Int.max_int) () =
   let head = Atomic.make_contended Nil in
-  let cons_waiters = Atomic.make_contended [] in
-  let prod_waiters = Atomic.make_contended [] in
-  { head; cons_waiters; prod_waiters; capacity = max capacity 1 }
-  |> Multicore_magic.copy_as_padded
+  { head; capacity = max capacity 1 } |> Multicore_magic.copy_as_padded
 
-let is_empty t = Atomic.get t.head == Nil
+exception Empty
+exception Full
 
-let rec signal_all waiters =
-  let triggers = Atomic.get waiters in
-  if triggers != [] then
-    if Atomic.compare_and_set waiters triggers [] then
-      List.iter Trigger.signal triggers
-    else signal_all waiters
+let is_empty t = Atomic.get t.head = Nil
 
-let rec peek t =
-  let old_head = Atomic.get t.head in
-  match old_head with
-  | Nil ->
-      let trigger = Trigger.create () in
-      let triggers = Atomic.get t.cons_waiters in
-      if Atomic.compare_and_set t.cons_waiters triggers (trigger :: triggers)
-      then begin
-        if Atomic.get t.head != Nil then signal_all t.cons_waiters
-        else
-          match Trigger.await trigger with
-          | None -> ()
-          | Some (exn, bt) ->
-              signal_all t.cons_waiters;
-              Printexc.raise_with_backtrace exn bt
-      end;
-      peek t
-  | Cons cons -> cons.value
+type ('a, _) poly = Option : ('a, 'a option) poly | Value : ('a, 'a) poly
 
-let peek_opt t =
-  let head = Atomic.get t.head in
-  match head with Nil -> None | Cons cons -> Some cons.value
-
-let rec pop t backoff =
+let peek_as : type a r. a t -> (a, r) poly -> r =
+ fun t poly ->
   match Atomic.get t.head with
-  | Nil ->
-      let trigger = Trigger.create () in
-      let triggers = Atomic.get t.cons_waiters in
-      if Atomic.compare_and_set t.cons_waiters triggers (trigger :: triggers)
-      then begin
-        if Atomic.get t.head != Nil then signal_all t.cons_waiters
-        else
-          match Trigger.await trigger with
-          | None -> ()
-          | Some (exn, bt) ->
-              signal_all t.cons_waiters;
-              Printexc.raise_with_backtrace exn bt
-      end;
-      pop t backoff
-  | Cons cons_r as old_head ->
-      if Atomic.compare_and_set t.head old_head cons_r.tail then (
-        signal_all t.prod_waiters;
-        cons_r.value)
-      else pop t (Backoff.once backoff)
+  | Nil -> begin
+      match poly with Option -> None | Value -> raise_notrace Empty
+    end
+  | Cons cons_r -> (
+      match poly with Option -> Some cons_r.value | Value -> cons_r.value)
 
-let pop t = pop t Backoff.default
+let peek_exn t = peek_as t Value
+let peek_opt t = peek_as t Option
 
-let rec pop_opt t backoff =
+let rec pop_as : type a r. a t -> Backoff.t -> (a, r) poly -> r =
+ fun t backoff poly ->
   match Atomic.get t.head with
-  | Nil -> None
+  | Nil -> begin
+      match poly with Option -> None | Value -> raise_notrace Empty
+    end
   | Cons cons_r as old_head ->
-      if Atomic.compare_and_set t.head old_head cons_r.tail then (
-        signal_all t.prod_waiters;
-        Some cons_r.value)
-      else pop_opt t (Backoff.once backoff)
+      if Atomic.compare_and_set t.head old_head cons_r.tail then
+        match poly with Option -> Some cons_r.value | Value -> cons_r.value
+      else pop_as t (Backoff.once backoff) poly
 
-let pop_opt t = pop_opt t Backoff.default
-
-let rec push t backoff value =
-  match Atomic.get t.head with
-  | Nil ->
-      let new_head = Cons { value; tail = Nil; capacity = 1 } in
-      if Atomic.compare_and_set t.head Nil new_head then
-        signal_all t.cons_waiters
-      else push t (Backoff.once backoff) value
-  | Cons cons_r as old_head ->
-      if cons_r.capacity >= t.capacity then begin
-        let trigger = Trigger.create () in
-        let triggers = Atomic.get t.prod_waiters in
-        if Atomic.compare_and_set t.prod_waiters triggers (trigger :: triggers)
-        then begin
-          if Atomic.get t.head != old_head then signal_all t.prod_waiters
-          else
-            match Trigger.await trigger with
-            | None -> ()
-            | Some (exn, bt) ->
-                signal_all t.prod_waiters;
-                Printexc.raise_with_backtrace exn bt
-        end;
-        push t backoff value
-      end
-      else
-        let new_head =
-          Cons { value; tail = old_head; capacity = cons_r.capacity + 1 }
-        in
-        if Atomic.compare_and_set t.head old_head new_head then
-          signal_all t.cons_waiters
-        else push t (Backoff.once backoff) value
-
-let push t value = push t Backoff.default value
-
-let rec try_push t backoff value =
-  match Atomic.get t.head with
-  | Nil ->
-      let new_head = Cons { value; tail = Nil; capacity = 1 } in
-      if Atomic.compare_and_set t.head Nil new_head then (
-        signal_all t.cons_waiters;
-        true)
-      else try_push t (Backoff.once backoff) value
-  | Cons cons_r as old_head ->
-      if cons_r.capacity >= t.capacity then false
-      else
-        let new_head =
-          Cons { value; tail = old_head; capacity = cons_r.capacity + 1 }
-        in
-        if Atomic.compare_and_set t.head old_head new_head then (
-          signal_all t.cons_waiters;
-          true)
-        else try_push t (Backoff.once backoff) value
-
-let try_push t value = try_push t Backoff.default value
-
-let length t =
-  match Atomic.get t.head with Nil -> 0 | Cons cons -> cons.capacity
+let pop_exn t = pop_as t Backoff.default Value
+let pop_opt t = pop_as t Backoff.default Option
 
 let rec pop_all t backoff =
   match Atomic.get t.head with
   | Nil -> []
   | old_head ->
-      if Atomic.compare_and_set t.head old_head Nil then (
-        signal_all t.prod_waiters;
+      if Atomic.compare_and_set t.head old_head Nil then
         let rec aux acc = function
           | Nil -> List.rev acc
           | Cons cons -> aux (cons.value :: acc) cons.tail
         in
-        aux [] old_head)
+        aux [] old_head
       else pop_all t (Backoff.once backoff)
 
 let pop_all t = pop_all t Backoff.default
+let to_seq t = pop_all t |> List.to_seq
+
+type _ mono = Unit : unit mono | Bool : bool mono
+
+let rec push_as : type r. 'a t -> Backoff.t -> 'a -> r mono -> r =
+ fun t backoff value mono ->
+  match Atomic.get t.head with
+  | Nil ->
+      if
+        Atomic.compare_and_set t.head Nil
+        @@ Cons { value; tail = Nil; capacity = 1 }
+      then match mono with Bool -> true | Unit -> ()
+      else push_as t (Backoff.once backoff) value mono
+  | Cons cons_r as old_head ->
+      if cons_r.capacity >= t.capacity then
+        match mono with Bool -> false | Unit -> raise Full
+      else
+        let new_head =
+          Cons { value; tail = old_head; capacity = cons_r.capacity + 1 }
+        in
+        if Atomic.compare_and_set t.head old_head new_head then
+          match mono with Bool -> true | Unit -> ()
+        else push_as t (Backoff.once backoff) value mono
+
+let push_exn t value = push_as t Backoff.default value Unit
+let try_push t value = push_as t Backoff.default value Bool
+
+let length t =
+  match Atomic.get t.head with Nil -> 0 | Cons cons -> cons.capacity
+
+let rec push_all_as : type r. 'a t -> Backoff.t -> 'a list -> r mono -> r =
+ fun t backoff values mono ->
+  let len = List.length values in
+  if len = 0 then match mono with Unit -> () | Bool -> true
+  else if len > t.capacity then
+    match mono with Unit -> raise Full | Bool -> false
+  else
+    let rec build_node len acc = function
+      | [] -> acc
+      | x :: xs ->
+          build_node (len + 1)
+            (Cons { capacity = len + 1; tail = acc; value = x })
+            xs
+    in
+    match Atomic.get t.head with
+    | Nil ->
+        if Atomic.compare_and_set t.head Nil (build_node 0 Nil values) then
+          match mono with Bool -> true | Unit -> ()
+        else push_all_as t (Backoff.once backoff) values mono
+    | Cons cons_r as old_head ->
+        if cons_r.capacity + len > t.capacity then
+          match mono with Bool -> false | Unit -> raise Full
+        else if
+          Atomic.compare_and_set t.head old_head
+          @@ build_node cons_r.capacity old_head values
+        then match mono with Bool -> true | Unit -> ()
+        else push_all_as t (Backoff.once backoff) values mono
+
+let try_push_all t values = push_all_as t Backoff.default values Bool
+let push_all_exn t values = push_all_as t Backoff.default values Unit
