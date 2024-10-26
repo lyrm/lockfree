@@ -28,4 +28,12 @@ let () =
   (< %{ocaml_version} 5.2.0))
  (action
   (copy atomic.without_contended.ml atomic.ml))) 
+
+(mdx
+ (package saturn_lockfree)
+ (enabled_if
+  (>= %{ocaml_version} 5.1.0))
+ (libraries saturn_lockfree)
+ (files bounded_stack.mli))
+
 |}

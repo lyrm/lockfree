@@ -19,16 +19,17 @@ val is_empty : 'a t -> bool
 (** {2 Consumer functions} *)
 
 exception Empty
-(** Raised when {!push_exn} or {!peek_exn} is applied to an empty stack.
+(** Raised when {!pop_exn} or {!peek_exn} or {!drop_exn} is applied to an empty
+ stack.
 
   This exception is meant to avoid allocations required by an option type.
   As such, it does not register backtrace information and it is recommended to 
   use the following pattern to catch it.
 
-  {[
+  {@ocaml skip[
     match pop_exn s with
-      | value -> (* ... *)
-      | exception Empty -> (* ... *)
+      | value -> () (* ... *) 
+      | exception Empty -> () (* ... *)
   ]} *)
 
 val peek_exn : 'a t -> 'a
@@ -43,44 +44,52 @@ val peek_opt : 'a t -> 'a option
 val pop_exn : 'a t -> 'a
 (** [pop_exn stack] removes and returns the top element of the [stack].
  
-  @raises Empty if the stack [s] is empty. *)
+  @raises Empty if the [stack] is empty. *)
 
 val pop_opt : 'a t -> 'a option
 (** [pop_opt stack] removes and returns [Some] of the top element of the [stack],
-    or [None] if the stack is empty. *)
+    or [None] if the [stack] is empty. *)
+
+val drop_exn : 'a t -> unit
+(** [drop stack] removes the top element of the [stack]. 
+
+  @raises Empty if the [stack] if empty. *)
+
+val try_compare_and_pop : 'a t -> 'a -> bool
+(** [try_compare_and_pop stack before] tries to remove the top element of the 
+  [stack] if it is equal to [before]. Returns [true] on success and [false] in 
+  case the hash table is empty or if the top element is not equal to [before].
+
+    ℹ️ The values are compared using physical equality, i.e. the [==] operator. *)
 
 val pop_all : 'a t -> 'a list
 (** [pop_all stack] removes and returns all elements of the [stack] in the LIFO 
 order. 
 
   {[
-    # let t : int Saturn.Bounded_stack.t =
-     Saturn.Bounded_stack.create ()
-    val t : int Saturn.Bounded_stack.t = <abstr>
-    # Saturn.Bounded_stack.try_push t 1
+    # open Saturn_lockfree.Bounded_stack
+    # let t : int t = create ()
+    val t : int t = <abstr>
+    # try_push t 1
     - : bool = true
-    # Saturn.Bounded_stack.try_push t 2
+    # try_push t 2
     - : bool = true
-    # Saturn.Bounded_stack.try_push t 3
+    # try_push t 3
     - : bool = true
-    # Saturn.Bounded_stack.pop_all t
-    - : int list = Some [3; 2; 1]
+    # pop_all t
+    - : int list = [3; 2; 1]
   ]}
 *)
-
-val to_seq : 'a t -> 'a Seq.t
-(** [to_seq stack] returns a sequence of all elements of the [stack] in the LIFO
-order. Equivalent to {[ pop_all stack |> List.to_seq ]} *)
 
 (** {2 Producer functions} *)
 
 exception Full
-(** Raised when {!push_exn} is applied to a full stack. *)
+(** Raised when {!push_exn} or {!push_all_exn} is applied to a full stack. *)
 
 val push_exn : 'a t -> 'a -> unit
 (** [push_exn stack element] adds [element] to the top of the [stack].
     
-  @raises Full if the stack [s] is full. *)
+  @raises Full if the [stack] is full. *)
 
 val try_push : 'a t -> 'a -> bool
 (** [try_push stack element] tries to add [element] to the top of the [stack].
@@ -90,49 +99,119 @@ val try_push : 'a t -> 'a -> bool
 val push_all_exn : 'a t -> 'a list -> unit
 (** [push_exn stack elements] adds all [elements] to the top of the [stack].
     
-  @raises Full if the stack [s] is full. *)
+  @raises Full if the [stack] is full. *)
 
 val try_push_all : 'a t -> 'a list -> bool
-(** [try_push stack elements] tries to add all [elements] to the top of the [stack].
-    Returns [true] if the element was successfully added, or [false] if the
-    stack is full. 
+(** [try_push stack elements] tries to add all [elements] to the top of the 
+    [stack]. Returns [true] if the element was successfully added, or [false] if 
+    the stack is full. 
     
   {[
-    # let t : int Saturn.Bounded_stack.t =
-     Saturn.Bounded_stack.create ()
-    val t : int Saturn.Bounded_stack.t = <abstr>
-    # Saturn.Bounded_stack.try_push_all t [1; 2; 3; 4]
+    # let t : int t = create ()
+    val t : int t = <abstr>
+    # try_push_all t [1; 2; 3; 4]
     - : bool = true
-    # Saturn.Bounded_stack.pop_opt t
+    # pop_opt t
     - : int option = Some 4
-    # Saturn.Bounded_stack.pop_opt t 
+    # pop_opt t 
     - : int option = Some 3
-    # Saturn.Bounded_stack.pop_all t
-    - : int list = Some [2; 1]
+    # pop_all t
+    - : int list = [2; 1]
   ]}
     *)
+
+(** {3 Updating bindings} *)
+
+val try_set : 'a t -> 'a -> bool
+(** [try_set stack value] tries to update the top element of the [stack] to
+    [value]. Returns [true] on success and [false] in case the [stack] is Empty.
+    *)
+
+val try_compare_and_set : 'a t -> 'a -> 'a -> bool
+(** [try_compare_and_set stack before after] tries to update the top element of 
+the [stack] from the [before] value to the [after] value. Returns [true] on 
+success and [false] in case the [stack] is empty or the top element is not equal 
+to [before].
+
+    ℹ️ The values are compared using physical equality, i.e. the [==]
+    operator. *)
+
+val set_exn : 'a t -> 'a -> 'a
+(** [set_exn stack after] tries to update the top element of [stack] from some 
+[before] value to the [after] value. Returns the [before] value on success.
+
+    @raise Empty if the [stack] is empty. *)
+
+(** {2 With Sequences }*)
+val to_seq : 'a t -> 'a Seq.t
+(** [to_seq stack] takes a snapshot of [stack] and returns its value top to 
+bottom.
+
+  🐌 This is a linear time operation. *)
+
+val of_seq : ?capacity:int -> 'a Seq.t -> 'a t
+(** [of_seq seq] create a stack from a [seq]. It must be finite *)
+
+val add_seq_exn : 'a t -> 'a Seq.t -> unit
+(** [add_seq stack stack seq] adds all elements of [seq] to the top of the 
+[stack]. [seq] must be finite. 
+
+@raises Full if the [seq] is too long to fit in the stack. *)
+
+val try_add_seq : 'a t -> 'a Seq.t -> bool
+(** [try_add_seq stack seq] tries to add all elements of [seq] to the top of the
+[stack]. Returns [true] if the elements were successfully added, or [false] if 
+the [seq] is too long to fit in the stack,  *)
 
 (** {1 Examples}
     An example top-level session:
     {[
-      # let t : int Saturn.Bounded_stack.t =
-        Saturn.Bounded_stack.create ()
-      val t : int Saturn.Bounded_stack.t = <abstr>
-      # Saturn.Bounded_stack.try_push t 42
+      # open Saturn_lockfree.Bounded_stack
+      # let t : int t = create ()
+      val t : int t = <abstr>
+      # try_push t 42
       - : bool = true
-      # Saturn.Bounded_stack.push_exn t 1
+      # push_exn t 1
       - : unit = ()
-      # Saturn.Bounded_stack.pop_exn t
+      # pop_exn t
       - : int = 1
-      # Saturn.Bounded_stack.peek_opt t
+      # peek_opt t
       - : int option = Some 42
-      # Saturn.Bounded_stack.pop_opt t
-      - : int option = Some 42 
-      # Saturn.Bounded_stack.pop_opt t
+      # pop_opt t
+      - : int option = Some 42
+      # pop_opt t
       - : int option = None
-      # Saturn.Bounded_stack.pop_exn t
-      Exception: Bounded_stack.Empty.]}
+      # pop_exn t
+      Exception: Saturn_lockfree__Bounded_stack.Empty.]}
 
     A multicore example: 
+    {@ocaml non-deterministic[
+      # open Saturn_lockfree.Bounded_stack
+      # let t :int t = create ()
+      val t : int t = <abstr>
+      # let barrier =  Atomic.make 2
+      val barrier : int Atomic.t = <abstr>
+      # let pusher () = 
+        Atomic.decr barrier;
+        while Atomic.get barrier != 0 do Domain.cpu_relax () done;
+
+        try_push_all t [1;2;3] |> ignore;
+        push_exn t 42;
+        push_exn t 12
+      val pusher : unit -> unit = <fun>
+      # let popper () = 
+        Atomic.decr barrier;
+        while Atomic.get barrier != 0 do Domain.cpu_relax () done;
+        List.init 6 (fun i -> Domain.cpu_relax (); pop_opt t)
+      val popper : unit -> int option list = <fun>
+      # let domain_pusher = Domain.spawn pusher
+      val domain_pusher : unit Domain.t = <abstr>
+      # let domain_popper = Domain.spawn popper
+      val domain_popper : int option list Domain.t = <abstr>
+      # Domain.join domain_pusher
+      - : unit = ()
+      # Domain.join domain_popper
+      - : int option list = [Some 42; Some 3; Some 2; Some 1; None; Some 12]
+      ]}
  
     *)

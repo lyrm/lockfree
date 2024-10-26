@@ -7,6 +7,7 @@
 (authors "KC Sivaramakrishnan")
 (maintainers "Carine Morel" "KC Sivaramakrishnan" "Sudha Parimala")
 (documentation "https://ocaml-multicore.github.io/saturn/")
+(using mdx 0.4)
 
 (package
  (name saturn)
