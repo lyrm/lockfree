@@ -32,7 +32,7 @@ let () =
 (mdx
  (package saturn_lockfree)
  (enabled_if
-  (>= %{ocaml_version} 5.1.0))
+   (<> %{os_type} Win32))
  (libraries saturn_lockfree)
  (files bounded_stack.mli))
 
