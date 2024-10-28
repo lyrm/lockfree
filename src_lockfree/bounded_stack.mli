@@ -51,7 +51,7 @@ val pop_opt : 'a t -> 'a option
     or [None] if the [stack] is empty. *)
 
 val drop_exn : 'a t -> unit
-(** [drop stack] removes the top element of the [stack]. 
+(** [drop_exn stack] removes the top element of the [stack]. 
 
   @raises Empty if the [stack] if empty. *)
 
@@ -97,12 +97,12 @@ val try_push : 'a t -> 'a -> bool
     stack is full. *)
 
 val push_all_exn : 'a t -> 'a list -> unit
-(** [push_exn stack elements] adds all [elements] to the top of the [stack].
+(** [push_all_exn stack elements] adds all [elements] to the top of the [stack].
     
   @raises Full if the [stack] is full. *)
 
 val try_push_all : 'a t -> 'a list -> bool
-(** [try_push stack elements] tries to add all [elements] to the top of the 
+(** [try_push_all stack elements] tries to add all [elements] to the top of the 
     [stack]. Returns [true] if the element was successfully added, or [false] if 
     the stack is full. 
     
@@ -153,7 +153,7 @@ val of_seq : ?capacity:int -> 'a Seq.t -> 'a t
 (** [of_seq seq] create a stack from a [seq]. It must be finite *)
 
 val add_seq_exn : 'a t -> 'a Seq.t -> unit
-(** [add_seq stack stack seq] adds all elements of [seq] to the top of the 
+(** [add_seq_exn stack stack seq] adds all elements of [seq] to the top of the 
 [stack]. [seq] must be finite. 
 
 @raises Full if the [seq] is too long to fit in the stack. *)
