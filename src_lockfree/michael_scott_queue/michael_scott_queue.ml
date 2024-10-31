@@ -18,7 +18,7 @@
 
 (* Michael-Scott queue *)
 
-type 'a node = Nil | Next of 'a * 'a node Atomic.t
+type 'a node = Nil | Next of { value : 'a; next : 'a node Atomic.t }
 
 type 'a t = {
   head : 'a node Atomic.t Atomic.t;
@@ -43,7 +43,7 @@ let rec pop_as :
   let old_head = Atomic.get head in
   match Atomic.get old_head with
   | Nil -> begin match poly with Value -> raise Empty | Option -> None end
-  | Next (value, next) ->
+  | Next { value; next } ->
       if Atomic.compare_and_set head old_head next then begin
         match poly with Value -> value | Option -> Some value
       end
@@ -59,7 +59,7 @@ let peek_as : type a r. a node Atomic.t Atomic.t -> (a, r) poly -> r =
   let old_head = Atomic.get head in
   match Atomic.get old_head with
   | Nil -> begin match poly with Value -> raise Empty | Option -> None end
-  | Next (value, _) -> (
+  | Next { value; _ } -> (
       match poly with Value -> value | Option -> Some value)
 
 let peek_opt t = peek_as t.head Option
@@ -77,16 +77,16 @@ let push { tail; _ } value =
     if not (Atomic.compare_and_set curr_end Nil node) then
       match Atomic.get curr_end with
       | Nil -> find_tail_and_enq curr_end node
-      | Next (_, n) -> find_tail_and_enq n node
+      | Next { next; _ } -> find_tail_and_enq next node
   in
 
   let new_tail = Atomic.make Nil in
-  let newnode = Next (value, new_tail) in
+  let newnode = Next { value; next = new_tail } in
   let old_tail = Atomic.get tail in
   if not (Atomic.compare_and_set old_tail Nil newnode) then begin
     match Atomic.get old_tail with
     | Nil -> find_tail_and_enq old_tail newnode
-    | Next (_, n) -> find_tail_and_enq n newnode
+    | Next { next; _ } -> find_tail_and_enq next newnode
   end;
   if not (Atomic.compare_and_set tail old_tail new_tail) then
     fix_tail tail new_tail
