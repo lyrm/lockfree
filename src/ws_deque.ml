@@ -47,17 +47,19 @@ let create () =
   let top_cache = ref 0 |> Multicore_magic.copy_as_padded in
   { top; bottom; top_cache; tab } |> Multicore_magic.copy_as_padded
 
+let next_pow2 n =
+  let rec loop acc = if acc >= n then acc else loop (acc lsl 1) in
+  loop 1
 
-let of_list l = 
+let of_list l =
   let len = List.length l in
-  let capacity = min min_capacity (2 * len) in
+  let capacity = min min_capacity (next_pow2 len) in
   let top = Atomic.make_contended 0 in
   let tab = Array.make capacity (Obj.magic ()) in
   List.iteri (fun i x -> Array.unsafe_set tab i (ref x)) l;
   let bottom = Atomic.make_contended len in
   let top_cache = ref 0 |> Multicore_magic.copy_as_padded in
   { top; bottom; top_cache; tab } |> Multicore_magic.copy_as_padded
-
 
 (*  *)
 
@@ -95,11 +97,14 @@ let push q v =
     q.tab <- a;
     Atomic.incr q.bottom
 
+exception Empty
+
 (* *)
 
-type ('a, _) poly = Option : ('a, 'a option) poly | Value : ('a, 'a) poly
-
-exception Empty
+type ('a, _) poly =
+  | Option : ('a, 'a option) poly
+  | Value : ('a, 'a) poly
+  | Unit : ('a, unit) poly
 
 let pop_as : type a r. a t -> (a, r) poly -> r =
  fun q poly ->
@@ -116,7 +121,7 @@ let pop_as : type a r. a t -> (a, r) poly -> r =
     out := Obj.magic ();
     if size + size + size <= capacity - min_capacity then
       q.tab <- realloc a t b capacity (capacity lsr 1);
-    match poly with Option -> Some res | Value -> res
+    match poly with Option -> Some res | Value -> res | Unit -> ()
   end
   else if b = t then begin
     (* Whether or not the [compare_and_set] below succeeds, [top_cache] can be
@@ -131,19 +136,42 @@ let pop_as : type a r. a t -> (a, r) poly -> r =
       let out = Array.unsafe_get a (b land (Array.length a - 1)) in
       let res = !out in
       out := Obj.magic ();
-      match poly with Option -> Some res | Value -> res
+      match poly with Option -> Some res | Value -> res | Unit -> ()
     end
-    else match poly with Option -> None | Value -> raise Empty
+    else match poly with Option -> None | Value | Unit -> raise Empty
   end
   else begin
     (* This write of [bottom] requires no fence.  The deque is empty and
        remains so until the next [push]. *)
     Atomic.fenceless_set q.bottom (b + 1);
-    match poly with Option -> None | Value -> raise Empty
+    match poly with Option -> None | Value | Unit -> raise Empty
   end
 
 let pop_exn q = pop_as q Value
 let pop_opt q = pop_as q Option
+let drop_exn q = pop_as q Unit
+
+(* *)
+
+type ('a, _) poly2 = Option : ('a, 'a option) poly2 | Value : ('a, 'a) poly2
+
+let peek_as : type a r. a t -> (a, r) poly2 -> r =
+ fun q poly ->
+  let b = Atomic.get q.bottom in
+  (* Read of [top] at this point requires no fence as we simply need to ensure
+     that the read happens after updating [bottom]. *)
+  let t = Atomic.fenceless_get q.top in
+  let size = b - t in
+  if 0 < size then begin
+    let a = q.tab in
+    let capacity = Array.length a in
+    let out = Array.unsafe_get a (b land (capacity - 1)) in
+    match poly with Option -> Some !out | Value -> !out
+  end
+  else match poly with Option -> None | Value -> raise Empty
+
+let peek_exn q = peek_as q Value
+let peek_opt q = peek_as q Option
 
 (* *)
 
@@ -161,10 +189,28 @@ let rec steal_as : type a r. a t -> Backoff.t -> (a, r) poly -> r =
     if Atomic.compare_and_set q.top t (t + 1) then begin
       let res = !out in
       out := Obj.magic ();
-      match poly with Option -> Some res | Value -> res
+      match poly with Option -> Some res | Value -> res | Unit -> ()
     end
     else steal_as q (Backoff.once backoff) poly
-  else match poly with Option -> None | Value -> raise Empty
+  else match poly with Option -> None | Value | Unit -> raise Empty
 
 let steal_exn q = steal_as q Backoff.default Value
 let steal_opt q = steal_as q Backoff.default Option
+let steal_drop_exn q = steal_as q Backoff.default Unit
+
+let steal_peek_as : type a r. a t -> (a, r) poly2 -> r =
+ fun q poly ->
+  (* Read of [top] does not require a fence at this point, but the read of
+     [top] must happen before the read of [bottom].  The write of [top] later
+     has no effect in case we happened to read an old value of [top]. *)
+  let t = Atomic.fenceless_get q.top in
+  let b = Atomic.get q.bottom in
+  let size = b - t in
+  if 0 < size then
+    let a = q.tab in
+    let out = Array.unsafe_get a (t land (Array.length a - 1)) in
+    match poly with Option -> Some !out | Value -> !out
+  else match poly with Option -> None | Value -> raise Empty
+
+let steal_peek_exn q = steal_peek_as q Value
+let steal_peek_opt q = steal_peek_as q Option

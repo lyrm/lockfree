@@ -6,13 +6,23 @@ open Util
 module Ws_deque = Saturn.Work_stealing_deque
 
 module Spec = struct
-  type cmd = Push of int | Pop | Steal
+  type cmd = 
+  | Push of int 
+  | Pop 
+  (* | Peek  *)
+  | Drop 
+  | Steal 
+  | Steal_peek | Steal_drop
 
   let show_cmd c =
     match c with
     | Push i -> "Push " ^ string_of_int i
     | Pop -> "Pop"
+    (* | Peek -> "Peek" *)
+       | Drop -> "Drop"
     | Steal -> "Steal"
+  | Steal_peek -> "Steal_peek"
+     | Steal_drop -> "Steal_drop"
 
   type state = int list
   type sut = int Ws_deque.t
@@ -24,11 +34,18 @@ module Spec = struct
          [
            Gen.map (fun i -> Push i) int_gen;
            Gen.return Pop;
-           (*Gen.return Steal;*)
-           (* No point in stealing from yourself :-D *)
+           (* Gen.return Peek; *)
+              Gen.return Drop;
          ])
 
-  let stealer_cmd _s = QCheck.make ~print:show_cmd (Gen.return Steal)
+  let stealer_cmd _s =
+    QCheck.make ~print:show_cmd
+      (Gen.oneof
+         [
+           Gen.return Steal; 
+           Gen.return Steal_peek; Gen.return Steal_drop 
+         ])
+
   let init_state = []
   let init_sut () = Ws_deque.create ()
   let cleanup _ = ()
@@ -39,8 +56,12 @@ module Spec = struct
         i :: s
         (*if i<>1213 then i::s else s*)
         (* an artificial fault *)
-    | Pop -> ( match s with [] -> s | _ :: s' -> s')
+    | Pop ->  ( match s with [] -> s | _ :: s' -> s') 
+    | Drop -> ( match s with [] -> s | _ :: s' -> s')
+    (* | Peek -> s *)
+    | Steal_peek -> s
     | Steal -> ( match List.rev s with [] -> s | _ :: s' -> List.rev s')
+    | Steal_drop -> ( match List.rev s with [] -> s | _ :: s' -> List.rev s')
 
   let precond _ _ = true
 
@@ -48,15 +69,33 @@ module Spec = struct
     match c with
     | Push i -> Res (unit, Ws_deque.push d i)
     | Pop -> Res (result int exn, protect Ws_deque.pop_exn d)
+    (* | Peek -> Res (result int exn, protect Ws_deque.peek_exn d) *)
+    | Drop -> Res (result unit exn, protect Ws_deque.drop_exn d)
     | Steal -> Res (result int exn, protect Ws_deque.steal_exn d)
+    | Steal_peek -> Res (result int exn, protect Ws_deque.steal_peek_exn d)
+    | Steal_drop -> Res (result unit exn, protect Ws_deque.steal_drop_exn d)
 
   let postcond c (s : state) res =
     match (c, res) with
     | Push _, Res ((Unit, _), _) -> true
     | Pop, Res ((Result (Int, Exn), _), res) -> (
         match s with [] -> res = Error Ws_deque.Empty | j :: _ -> res = Ok j)
+    (* | Peek, Res ((Result (Int, Exn), _), res) -> (
+        match s with [] -> res = Error Ws_deque.Empty | j :: _ -> res = Ok j) *)
+    | Drop, Res ((Result (Unit, Exn), _), res) -> (
+        match s with [] -> res = Error Ws_deque.Empty | _ :: _ -> res = Ok ())
     | Steal, Res ((Result (Int, Exn), _), res) -> (
-        match List.rev s with [] -> Result.is_error res | j :: _ -> res = Ok j)
+        match List.rev s with
+        | [] -> res = Error Ws_deque.Empty
+        | j :: _ -> res = Ok j)
+    | Steal_peek, Res ((Result (Int, Exn), _), res) -> (
+        match List.rev s with
+        | [] -> res = Error Ws_deque.Empty
+        | j :: _ -> res = Ok j)
+    | Steal_drop, Res ((Result (Unit, Exn), _), res) -> (
+        match List.rev s with
+        | [] -> res = Error Ws_deque.Empty
+        | _ :: _ -> res = Ok ())
     | _, _ -> false
 end
 
