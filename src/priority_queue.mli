@@ -28,15 +28,15 @@ val find_opt : ('k, 'v) t -> 'k -> 'v option
 val mem : ('k, 'v) t -> 'k -> bool
 (** [mem s k] determines whether the skiplist [s] contained a binding of [k]. *)
 
-val try_add : ('k, 'v) t -> 'k -> 'v -> bool
-(** [try_add s k v] tries to add a new binding of [k] to [v] into the skiplist
+val add : ('k, 'v) t -> 'k -> 'v -> unit
+(** [add s k v] tries to add a new binding of [k] to [v] into the skiplist
     [s] and returns [true] on success.  Otherwise the skiplist already contained
     a binding of [k] and [false] is returned. *)
 
-val try_remove : ('k, 'v) t -> 'k -> bool
-(** [try_remove s k] tries to remove a binding of [k] from the skiplist and
-    returns [true] on success.  Otherwise the skiplist did not contain a binding
-    of [k] and [false] is returned. *)
+val remove_min_opt : ('k, 'v) t -> ('k * 'v) option
+(** [remove_min_opt s] removes the binding with the smallest key from the skiplist
+    [s] and returns the key-value pair.  If the skiplist was empty [None] is
+    returned. *)
 
 val length : ('k, 'v) t -> int
 (** [length s] computes the number of bindings in the skiplist [s]. *)
