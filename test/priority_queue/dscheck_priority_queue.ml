@@ -1,12 +1,12 @@
 open Priority_queue
 
 module Atomic = Dscheck.TracedAtomic
-(** This is needed in this order as the skiplist.ml file contains 
-  {[
-  module Atomic = Multicore_magic.Transparent_atomic 
-  ]}
-  which is in multicore-magic-dscheck library only a subset of [Dscheck.TracedAtomic] function.
-*)
+(** This is needed in this order as the skiplist.ml file contains
+    {[
+      module Atomic = Multicore_magic.Transparent_atomic
+    ]}
+    which is in multicore-magic-dscheck library only a subset of
+    [Dscheck.TracedAtomic] function. *)
 
 let _test_max_height_of () =
   let s = create ~max_height:1 ~compare () in
@@ -28,6 +28,13 @@ let _seq () =
       let removed2 = remove_min_opt pq in
       let removed3 = remove_min_opt pq in
       let removed4 = remove_min_opt pq in
+
+      Atomic.spawn (fun () ->
+          add pq 3 1;
+          mem pq 3 |> ignore);
+
+      Atomic.spawn (fun () -> mem pq 2 |> ignore);
+
       Atomic.final (fun () ->
           Atomic.check (fun () -> removed1 = Some (1, 1));
           Atomic.check (fun () -> removed2 = Some (1, 42));
@@ -124,6 +131,27 @@ let _two_remove_add () =
       Atomic.spawn (fun () -> add pq 1 2);
 
       Atomic.final (fun () -> Atomic.check (fun () -> !removed1 = Some (1, 1))))
+
+let _two_remove_add () =
+  Atomic.trace (fun () ->
+      Random.init 0;
+      let pq = create ~max_height:3 ~compare:Int.compare () in
+
+      List.iter (fun i -> add pq 1 i) [ 1; 2 ];
+
+      (* List.iter (fun i -> add pq 2 i) [ 4; 5; 6 ]; *)
+      Atomic.spawn (fun () ->
+          (* remove_min_opt pq |> ignore; *)
+          (* add pq 1 4; *)
+          (* add pq 1 5; *)
+          remove_min_opt pq |> ignore);
+      Atomic.spawn (fun () ->
+          remove_min_opt pq |> ignore;
+          (* add pq 1 4; *)
+          (* add pq 1 5; *)
+          remove_min_opt pq |> ignore);
+
+      Atomic.final (fun () -> ()))
 
 let () =
   let open Alcotest in

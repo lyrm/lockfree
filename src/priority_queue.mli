@@ -13,7 +13,7 @@ val create : ?max_height:int -> compare:('k -> 'k -> int) -> unit -> ('k, 'v) t
     such as [Int.compare] or [String.compare].
 
     The optional [max_height] argument determines the maximum height of nodes in
-    the skiplist and directly affects the performance of the skiplist.  The
+    the skiplist and directly affects the performance of the skiplist. The
     current implementation does not adjust height automatically. *)
 
 val max_height_of : ('k, 'v) t -> int
@@ -29,14 +29,17 @@ val mem : ('k, 'v) t -> 'k -> bool
 (** [mem s k] determines whether the skiplist [s] contained a binding of [k]. *)
 
 val add : ('k, 'v) t -> 'k -> 'v -> unit
-(** [add s k v] tries to add a new binding of [k] to [v] into the skiplist
-    [s] and returns [true] on success.  Otherwise the skiplist already contained
-    a binding of [k] and [false] is returned. *)
+(** [add s k v] tries to add a new binding of [k] to [v] into the skiplist [s]
+    and returns [true] on success. Otherwise the skiplist already contained a
+    binding of [k] and [false] is returned. *)
 
 val remove_min_opt : ('k, 'v) t -> ('k * 'v) option
-(** [remove_min_opt s] removes the binding with the smallest key from the skiplist
-    [s] and returns the key-value pair.  If the skiplist was empty [None] is
-    returned. *)
+(** [remove_min_opt s] removes the binding with the smallest key from the
+    skiplist [s] and returns the key-value pair. If the skiplist was empty
+    [None] is returned. *)
 
 val length : ('k, 'v) t -> int
 (** [length s] computes the number of bindings in the skiplist [s]. *)
+
+val print_debug : (int, int) t -> unit
+(** [print_debug s] prints a debug representation of the skiplist [s]. *)

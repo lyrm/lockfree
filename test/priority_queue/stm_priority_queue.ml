@@ -3,8 +3,10 @@ open STM
 module Priority_queue = Saturn.Priority_queue
 
 module Spec = struct
-  type cmd = (* Mem of int  *)
-    | Add of int * int | Remove_min
+  type cmd =
+    (* Mem of int  *)
+    | Add of int * int
+    | Remove_min
   (* | Length *)
 
   let show_cmd c =
