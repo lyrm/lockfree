@@ -12,14 +12,10 @@
     OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
     PERFORMANCE OF THIS SOFTWARE. *)
 
-(* Based largely on the skiplist implementation. *)
+(* Based largely on the skiplist implementation written by Vesa Karvonen. *)
 
 module Atomic = Multicore_magic.Transparent_atomic
 
-(* OCaml doesn't allow us to use one of the unused (always 0) bits in pointers
-   for the marks and an indirection is needed.  This representation avoids the
-   indirection except for marked references in nodes to be removed.  A GADT with
-   polymorphic variants is used to disallow nested [Mark]s. *)
 type ('k, 'v, _) node =
   | Null : ('k, 'v, [> `Null ]) node
   | Node : {
@@ -36,9 +32,6 @@ type ('k, 'v, _) node =
     }
       -> ('k, 'v, [> `Mark ]) node
 
-(* The implementation relies on this existential being unboxed.  More
-   specifically, it is assumed that [Link node == Link node] meaning that the
-   [Link] constructor does not allocate. *)
 and ('k, 'v) link =
   | Link : ('k, 'v, [< `Null | `Node | `Mark ]) node -> ('k, 'v) link
 [@@unboxed]
@@ -187,7 +180,7 @@ and find_node_rec t ~timestamp key prev prev_at_level level :
             0 < c
             || c = 0
                && Option.fold ~none:false
-                    ~some:(fun ts -> ts < r.timestamp)
+                    ~some:(fun ts -> ts <= r.timestamp)
                     timestamp
           in
 
@@ -318,118 +311,37 @@ let length t = Size.get t.size
 
 (* *)
 
-(* let rec try_marked t links level link = function
-  | Link (Mark r) ->
-      if level = 0 then begin
-        Size.update_once t.size r.decr;
-        `Already_removed
-      end
-      else
-        let level = level - 1 in
-        let link = Array.unsafe_get links level in
-        try_marked t links level link (Atomic.get link)
-  | Link ((Null | Node _) as succ) ->
-      let decr =
-        if level = 0 then Size.new_once t.size Size.decr else Size.used_once
-      in
-      let marked_succ = Mark { node = succ; decr } in
-      if Atomic.compare_and_set link (Link succ) (Link marked_succ) then
-        if level = 0 then `Marked
-        else
-          let level = level - 1 in
-          let link = Array.unsafe_get links level in
-          try_marked t links level link (Atomic.get link)
-      else if level = 0 then `Changed
-      else
-        let level = level - 1 in
-        let link = Array.unsafe_get links level in
-        try_marked t links level link (Atomic.get link)
-
-and remove_min_opt t curr_timestamp prev = function
-  | Link Null -> None
-  | Link (Node r) -> begin
-      let next_at_level_0 = Array.unsafe_get r.next 0 in
-      match Atomic.get next_at_level_0 with
-      | Link (Null | Node _) -> begin
-          if curr_timestamp > r.timestamp then
-            (* The node is old enough : let's try to remove it  ! *)
-            let level = Array.length r.next in
-            let link = Array.unsafe_get r.next (level - 1) in
-            let is_marked =
-              try_marked t r.next (level - 1) link (Atomic.get link)
-            in
-            match is_marked with
-            | `Already_removed ->
-                (* Somebody else did the final mark (at level0) so this node is 
-                semantically removed. All nodes before are also semantically 
-                removed or younger so let's move forward. *)
-                remove_min_opt t curr_timestamp next_at_level_0
-                  (Atomic.get next_at_level_0)
-            | `Marked ->
-                (* Succes ! Let's return ! *)
-                let _ = find_node ~timestamp:curr_timestamp t r.key in
-                Some (r.key, r.value)
-            | `Changed ->
-                (* Either another domain make the mark at level 0 before me or 
-                another node was added. I need to retry ! *)
-                remove_min_opt t curr_timestamp prev (Atomic.get prev)
-          else
-            (* this node has been added after the linearization point of the 
-            current remove_min operation : it is ignored *)
-            remove_min_opt t curr_timestamp next_at_level_0
-              (Atomic.get next_at_level_0)
-        end
-      | Link (Mark marked) -> begin
-          Size.update_once t.size marked.decr;
-          (* Help remove the marked node *)
-          find_node ~timestamp:r.timestamp t r.key |> ignore;
-          (* Retry *)
-          remove_min_opt t curr_timestamp prev (Atomic.get prev)
-        end
-    end
-  | Link (Mark _) ->
-      let level0 = Array.unsafe_get t.root 0 in
-      remove_min_opt t curr_timestamp level0 (Atomic.get level0)
-
-let remove_min_opt (t : ('p, 'v) t) =
-  let level0 = Array.unsafe_get t.root 0 in
-  let curr_timestamp = Atomic.fetch_and_add t.timestamp 1 in
-  remove_min_opt t curr_timestamp level0 (Atomic.get level0) *)
-
-(* *)
-
 let rec find_min t timestamp : (_, _, [< `Node | `Null ]) node =
   let rec find_min_rec prev_at_level0 = function
     | Link (Mark _) -> find_min t timestamp
     | Link Null -> Null
     | Link (Node curr as curr_node) as curr_link -> begin
-        if curr.timestamp > timestamp then
-          (* node is too young *)
-          let next_at_level_0 = Array.unsafe_get curr.next 0 in
-          find_min_rec next_at_level_0 (Atomic.get next_at_level_0)
-        else
-          let next_at_level_0 = Array.unsafe_get curr.next 0 in
-          match Atomic.get next_at_level_0 with
-          | Link (Null | Node _) -> curr_node
-          | Link (Mark next_marked) ->
-              Size.update_once t.size next_marked.decr;
-              let after = Link next_marked.node in
-              if Atomic.compare_and_set prev_at_level0 curr_link after then
-                find_min_rec prev_at_level0 after
-              else find_min_rec prev_at_level0 (Atomic.get prev_at_level0)
+        let next_at_level_0 = Array.unsafe_get curr.next 0 in
+        match Atomic.get next_at_level_0 with
+        | Link (Null | Node _) ->
+            if curr.timestamp > timestamp then
+              (* node is too young *)
+              let next_at_level_0 = Array.unsafe_get curr.next 0 in
+              find_min_rec next_at_level_0 (Atomic.get next_at_level_0)
+            else curr_node
+        | Link (Mark next_marked) ->
+            Size.update_once t.size next_marked.decr;
+            let after = Link next_marked.node in
+            if Atomic.compare_and_set prev_at_level0 curr_link after then
+              find_min_rec prev_at_level0 after
+            else find_min_rec prev_at_level0 (Atomic.get prev_at_level0)
       end
   in
   let prev = t.root in
   let prev_at_level0 = Array.unsafe_get prev 0 in
-  if Atomic.get prev_at_level0 != Link Null then Null
-  else find_min_rec prev_at_level0 (Atomic.get prev_at_level0)
+  find_min_rec prev_at_level0 (Atomic.get prev_at_level0)
 
 let find_min_debug t =
   match find_min t (Atomic.get t.timestamp) with
   | Null -> None
   | Node r -> Some (r.key, r.value)
 
-let rec try_remove t next level link = function
+let rec try_remove t timestamp next level link = function
   | Link (Mark r) ->
       if level = 0 then begin
         Size.update_once t.size r.decr;
@@ -438,7 +350,7 @@ let rec try_remove t next level link = function
       else
         let level = level - 1 in
         let link = Array.unsafe_get next level in
-        try_remove t next level link (Atomic.get link)
+        try_remove t timestamp next level link (Atomic.get link)
   | Link ((Null | Node _) as succ) ->
       let decr =
         if level = 0 then Size.new_once t.size Size.decr else Size.used_once
@@ -447,22 +359,23 @@ let rec try_remove t next level link = function
       if Atomic.compare_and_set link (Link succ) (Link marked_succ) then
         if level = 0 then
           (* TODO : use find_node  *)
-          let _node = find_min t in
+          let _node = find_node ~timestamp t in
           true
         else
           let level = level - 1 in
           let link = Array.unsafe_get next level in
-          try_remove t next level link (Atomic.get link)
-      else try_remove t next level link (Atomic.get link)
+          try_remove t timestamp next level link (Atomic.get link)
+      else try_remove t timestamp next level link (Atomic.get link)
 
 let rec remove_min_opt t =
-  let curr_timestamp = Atomic.fetch_and_add t.timestamp 1 in
+  let curr_timestamp = Atomic.get t.timestamp in
   match find_min t curr_timestamp with
   | Null -> None
   | Node { next; key; value; _ } ->
       let level = Array.length next - 1 in
       let link = Array.unsafe_get next level in
-      if try_remove t next level link (Atomic.get link) then Some (key, value)
+      if try_remove t curr_timestamp next level link (Atomic.get link) then
+        Some (key, value)
       else remove_min_opt t
 
 (* match find_node t key with

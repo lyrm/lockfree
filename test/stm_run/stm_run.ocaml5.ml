@@ -1,7 +1,5 @@
 include Intf
 
-[@@@warning "-27"]
-
 let run (type cmd state sut) ?(verbose = true) ?(count = default_count)
     ?(budgetf = default_budgetf) ~name ?make_domain
     (module Spec : STM.Spec
@@ -16,14 +14,14 @@ let run (type cmd state sut) ?(verbose = true) ?(count = default_count)
   Util.run_with_budget ~budgetf ~count @@ fun count ->
   [
     [ Seq.agree_test ~count ~name:(name ^ " sequential") ];
-    (* (match make_domain with
+    (match make_domain with
     | None -> [ Dom.agree_test_par ~count ~name:(name ^ " parallel") ]
     | Some make_domain ->
         make_domain ~count ~name
           (module Dom : STM_domain
             with type Spec.cmd = cmd
              and type Spec.state = state
-             and type Spec.sut = sut)); *)
+             and type Spec.sut = sut));
   ]
   |> List.concat
   |> QCheck_base_runner.run_tests ~verbose

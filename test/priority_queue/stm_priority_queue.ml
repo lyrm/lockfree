@@ -16,12 +16,14 @@ module Spec = struct
     | Remove_min -> "Remove_min"
   (* | Length -> "Length" *)
 
-  type state = { min : int; queue : (int * int) list }
+  module Mint = Map.Make (Int)
+
+  type state = int list Mint.t
   type sut = (int, int) Priority_queue.t
 
   let arb_cmd _s =
-    let priority_gen = Gen.int_bound 10 in
-    let val_gen = Gen.int_bound 100 in
+    let priority_gen = Gen.int_bound 5 in
+    let val_gen = Gen.int_bound 20 in
     QCheck.make ~print:show_cmd
       (Gen.oneof
          [
@@ -31,35 +33,27 @@ module Spec = struct
            (* Gen.return Length; *)
          ])
 
-  let init_state = { min = Int.max_int; queue = [] }
-
-  (* { min = 1; queue = List.init 5 (fun i -> (i + 1, 1)) } *)
-
+  let init_state = Mint.empty
   let init_sut () = Priority_queue.create ~compare:Int.compare ()
-  (* let sl = Priority_queue.create ~compare:Int.compare () in
-    List.iter (fun i -> Priority_queue.add sl i 1)
-    @@ List.init 5 (fun i -> i + 1);
-    sl *)
-
   let cleanup _ = ()
-
-  let new_min queue =
-    let rec aux curr_min queue =
-      match queue with
-      | [] -> curr_min
-      | (p, _) :: xs -> if p < curr_min then aux p xs else aux curr_min xs
-    in
-    { min = aux Int.max_int queue; queue }
 
   let next_state c (s : state) =
     match c with
     | Add (p, i) -> begin
-        let min = Int.min s.min p in
-        { min; queue = List.rev s.queue |> List.cons (p, i) |> List.rev }
+        match Mint.find_opt p s with
+        | None -> Mint.add p [ i ] s
+        | Some l -> Mint.add p (i :: List.rev l |> List.rev) s
       end
-    | Remove_min ->
-        let queue = List.remove_assoc s.min s.queue in
-        new_min queue
+    | Remove_min -> (
+        let bindings = Mint.bindings s in
+        match bindings with
+        | [] -> s
+        | (p, values) :: _ -> (
+            let s = Mint.remove p s in
+            match values with
+            | [] -> assert false
+            | [ _ ] -> s
+            | _ :: values -> Mint.add p values s))
   (* | Mem _ -> s
      | Length -> s *)
 
@@ -81,9 +75,11 @@ module Spec = struct
     match (c, res) with
     | Add (_, _), Res ((Unit, _), ()) -> true
     | Remove_min, Res ((List Int, _), res) -> begin
-        match List.sort (fun (p1, _) (p2, _) -> Int.compare p1 p2) s.queue with
+        match Mint.bindings s with
         | [] -> res = []
-        | (p, _) :: _ -> [ p; List.assoc p s.queue ] = res
+        | (p, values) :: _ -> begin
+            match values with [] -> assert false | v :: _ -> res = [ p; v ]
+          end
       end
     (* | Mem i, Res ((Bool, _), res) -> List.mem_assoc i s.queue = res
        | Length, Res ((Int, _), res) -> List.length s.queue = res *)
