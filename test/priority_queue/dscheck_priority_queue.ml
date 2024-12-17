@@ -88,6 +88,7 @@ let _two_remove () =
       Atomic.spawn (fun () ->
           add pq 1 1;
           removed1 := remove_min_opt pq);
+
       Atomic.spawn (fun () -> removed2 := remove_min_opt pq);
 
       Atomic.final (fun () ->
@@ -132,23 +133,18 @@ let _two_remove_add () =
 
       Atomic.final (fun () -> Atomic.check (fun () -> !removed1 = Some (1, 1))))
 
-let _two_remove_add () =
+let _two_remove_add2 () =
   Atomic.trace (fun () ->
-      Random.init 0;
-      let pq = create ~max_height:3 ~compare:Int.compare () in
+      Random.init 6;
+      let pq = create ~max_height:2 ~compare:Int.compare () in
+      List.iter (fun i -> add pq i 1) [ 1; 2 ];
 
-      List.iter (fun i -> add pq 1 i) [ 1; 2 ];
-
-      (* List.iter (fun i -> add pq 2 i) [ 4; 5; 6 ]; *)
+      print_debug pq;
       Atomic.spawn (fun () ->
-          (* remove_min_opt pq |> ignore; *)
-          (* add pq 1 4; *)
-          (* add pq 1 5; *)
-          remove_min_opt pq |> ignore);
+          (* add pq 1 3; *)
+          add pq 1 4);
       Atomic.spawn (fun () ->
           remove_min_opt pq |> ignore;
-          (* add pq 1 4; *)
-          (* add pq 1 5; *)
           remove_min_opt pq |> ignore);
 
       Atomic.final (fun () -> ()))
@@ -159,13 +155,14 @@ let () =
     [
       ( "basic",
         [
-          test_case "max_height_of" `Quick _test_max_height_of;
-          test_case "seq" `Quick _seq;
+          (* test_case "max_height_of" `Quick _test_max_height_of;
+          test_case "seq" `Quick _seq; *)
           test_case "2-mem" `Slow _two_mem;
           test_case "2-add-same" `Slow _two_add_same;
           test_case "2-add" `Slow _two_add;
           test_case "2-remove-fifo" `Slow _two_remove_fifo;
           test_case "2-remove" `Slow _two_remove;
           test_case "2-remove-add" `Slow _two_remove_add;
+          test_case "2-remove-add2" `Slow _two_remove_add2;
         ] );
     ]

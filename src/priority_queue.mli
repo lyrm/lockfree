@@ -43,3 +43,5 @@ val length : ('k, 'v) t -> int
 
 val print_debug : (int, int) t -> unit
 (** [print_debug s] prints a debug representation of the skiplist [s]. *)
+
+val find_min_debug : (int, int) t -> (int * int) option

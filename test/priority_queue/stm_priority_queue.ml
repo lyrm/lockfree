@@ -32,7 +32,15 @@ module Spec = struct
          ])
 
   let init_state = { min = Int.max_int; queue = [] }
+
+  (* { min = 1; queue = List.init 5 (fun i -> (i + 1, 1)) } *)
+
   let init_sut () = Priority_queue.create ~compare:Int.compare ()
+  (* let sl = Priority_queue.create ~compare:Int.compare () in
+    List.iter (fun i -> Priority_queue.add sl i 1)
+    @@ List.init 5 (fun i -> i + 1);
+    sl *)
+
   let cleanup _ = ()
 
   let new_min queue =

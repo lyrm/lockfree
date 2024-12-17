@@ -1,5 +1,4 @@
-(* Copyright (c) 2023 Vesa Karvonen
-   Copyright (c) 2024 Carine Morel
+(* Copyright (c) 2024 Carine Morel
 
     Permission to use, copy, modify, and/or distribute this software for any
     purpose with or without fee is hereby granted, provided that the above
@@ -15,9 +14,6 @@
 
 (* Based largely on the skiplist implementation. *)
 
-(* TODO : When a just added node has been added the function used to removed is find_path
-   but it stops as the first node with the right priority meaning, if won't do it *)
-
 module Atomic = Multicore_magic.Transparent_atomic
 
 (* OCaml doesn't allow us to use one of the unused (always 0) bits in pointers
@@ -31,7 +27,7 @@ type ('k, 'v, _) node =
       value : 'v;
       next : ('k, 'v) links;
       mutable incr : Size.once;
-      timestamp : int;
+      mutable timestamp : int;
     }
       -> ('k, 'v, [> `Node ]) node
   | Mark : {
@@ -166,37 +162,47 @@ and find_path_rec t key prev prev_at_level preds succs level lowest = function
 (** [find_node t key] tries to find the first node with the specified [key],
     removing nodes with marked references along the way, and stopping as soon as
     the node is found. *)
-let rec find_node t key =
-  (* FIND is an issue as it is possible to have *)
+let rec find_node t ?timestamp key =
   let prev = t.root in
   let level = Array.length prev - 1 in
   let prev_at_level = Array.unsafe_get prev level in
-  find_node_rec t key prev prev_at_level level (Atomic.get prev_at_level)
+  find_node_rec t ~timestamp key prev prev_at_level level
+    (Atomic.get prev_at_level)
 
-and find_node_rec t key prev prev_at_level level :
+and find_node_rec t ~timestamp key prev prev_at_level level :
     _ -> (_, _, [< `Null | `Node ]) node = function
   | Link Null ->
       if 0 < level then
         let level = level - 1 in
         let prev_at_level = Array.unsafe_get prev level in
-        find_node_rec t key prev prev_at_level level (Atomic.get prev_at_level)
+        find_node_rec t ~timestamp key prev prev_at_level level
+          (Atomic.get prev_at_level)
       else Null
   | Link (Node r as curr) -> begin
       let next_at_level = Array.unsafe_get r.next level in
       match Atomic.get next_at_level with
       | Link (Null | Node _) as next ->
           let c = t.compare key r.key in
-          if 0 < c then find_node_rec t key r.next next_at_level level next
+          let go_next_if =
+            0 < c
+            || c = 0
+               && Option.fold ~none:false
+                    ~some:(fun ts -> ts < r.timestamp)
+                    timestamp
+          in
+
+          if go_next_if then
+            find_node_rec t ~timestamp key r.next next_at_level level next
           else if 0 < level then
             let level = level - 1 in
             let prev_at_level = Array.unsafe_get prev level in
-            find_node_rec t key prev prev_at_level level
+            find_node_rec t ~timestamp key prev prev_at_level level
               (Atomic.get prev_at_level)
           else if c = 0 then curr
           else Null
       | Link (Mark r) ->
           if level = 0 then Size.update_once t.size r.decr;
-          find_node_rec t key prev prev_at_level level
+          find_node_rec t ~timestamp key prev prev_at_level level
             (let after = Link r.node in
              if Atomic.compare_and_set prev_at_level (Link curr) after then
                after
@@ -231,8 +237,8 @@ let mem t key = match find_node t key with Null -> false | Node _ -> true
 
 (* TODO using find_path to remove node is not ideal 
 
-Issue : [add] adds after all identical keys whereas [remove] removes the first
-so this is not possible to use the same function for both. 
+Why not using [find_node]: [add] adds after all identical keys whereas [find_node] 
+is searching for the first so this is not possible to use the same function for both. 
 
 *)
 let rec add t key value preds succs =
@@ -241,8 +247,7 @@ let rec add t key value preds succs =
   let (Node r as node : (_, _, [ `Node ]) node) =
     let next = Array.map (fun succ -> Atomic.make (Link succ)) succs in
     let incr = Size.new_once t.size Size.incr in
-    Node
-      { key; value; incr; next; timestamp = Atomic.fetch_and_add t.timestamp 1 }
+    Node { key; value; incr; next; timestamp = Int.max_int }
   in
   if
     let succ = Link (Array.unsafe_get succs 0) in
@@ -252,6 +257,7 @@ let rec add t key value preds succs =
       Size.update_once t.size r.incr;
       r.incr <- Size.used_once
     end;
+    r.timestamp <- Atomic.fetch_and_add t.timestamp 1;
     (* The node is now considered as added to the skiplist. *)
     let rec update_levels level : unit =
       if Array.length r.next = level then begin
@@ -312,49 +318,7 @@ let length t = Size.get t.size
 
 (* *)
 
-(* let rec find_and_remove t key =
-  let prev = t.root in
-  let level = Array.length prev - 1 in
-  let prev_at_level = Array.unsafe_get prev level in
-  find_and_remove_rec t key prev prev_at_level level (Atomic.get prev_at_level)
-
-and find_and_remove_rec t key prev prev_at_level level = function
-  | Link Null -> begin
-      if 0 < level then
-        let level = level - 1 in
-        let prev_at_level = Array.unsafe_get prev level in
-        find_and_remove_rec t key prev prev_at_level level
-          (Atomic.get prev_at_level)
-    end
-  | Link (Node r as curr) -> begin
-      let next_at_level = Array.unsafe_get r.next level in
-      match Atomic.get next_at_level with
-      | Link Null -> begin
-          if 0 < level then
-            let level = level - 1 in
-            let prev_at_level = Array.unsafe_get prev level in
-            find_and_remove_rec t key prev prev_at_level level
-              (Atomic.get prev_at_level)
-        end
-      | Link (Node r_next) as next ->
-          let c = t.compare key r_next.key in
-          if 0 <= c then
-            find_and_remove_rec t key r.next next_at_level level next
-          else if 0 < level then
-            let level = level - 1 in
-            let prev_at_level = Array.unsafe_get prev level in
-            find_and_remove_rec t key prev prev_at_level level
-              (Atomic.get prev_at_level)
-      | Link (Mark r) ->
-          if level = 0 then Size.update_once t.size r.decr;
-          let after = Link r.node in
-          Atomic.compare_and_set prev_at_level (Link curr) after |> ignore;
-          find_and_remove_rec t key prev prev_at_level level
-            (Atomic.get prev_at_level)
-    end
-  | Link (Mark _) -> find_and_remove t key *)
-
-let rec try_marked t key links level link = function
+(* let rec try_marked t links level link = function
   | Link (Mark r) ->
       if level = 0 then begin
         Size.update_once t.size r.decr;
@@ -363,7 +327,7 @@ let rec try_marked t key links level link = function
       else
         let level = level - 1 in
         let link = Array.unsafe_get links level in
-        try_marked t key links level link (Atomic.get link)
+        try_marked t links level link (Atomic.get link)
   | Link ((Null | Node _) as succ) ->
       let decr =
         if level = 0 then Size.new_once t.size Size.decr else Size.used_once
@@ -374,12 +338,12 @@ let rec try_marked t key links level link = function
         else
           let level = level - 1 in
           let link = Array.unsafe_get links level in
-          try_marked t key links level link (Atomic.get link)
+          try_marked t links level link (Atomic.get link)
       else if level = 0 then `Changed
       else
         let level = level - 1 in
         let link = Array.unsafe_get links level in
-        try_marked t key links level link (Atomic.get link)
+        try_marked t links level link (Atomic.get link)
 
 and remove_min_opt t curr_timestamp prev = function
   | Link Null -> None
@@ -392,29 +356,33 @@ and remove_min_opt t curr_timestamp prev = function
             let level = Array.length r.next in
             let link = Array.unsafe_get r.next (level - 1) in
             let is_marked =
-              try_marked t r.key r.next (level - 1) link (Atomic.get link)
+              try_marked t r.next (level - 1) link (Atomic.get link)
             in
             match is_marked with
             | `Already_removed ->
-                (* Somebody else did the final mark (at level0) so this node is semantically removed. All nodes before are also semantically removed or younger so let's move forward. *)
+                (* Somebody else did the final mark (at level0) so this node is 
+                semantically removed. All nodes before are also semantically 
+                removed or younger so let's move forward. *)
                 remove_min_opt t curr_timestamp next_at_level_0
                   (Atomic.get next_at_level_0)
             | `Marked ->
                 (* Succes ! Let's return ! *)
-                let _ = find_node t r.key in
+                let _ = find_node ~timestamp:curr_timestamp t r.key in
                 Some (r.key, r.value)
             | `Changed ->
-                (* Either another domain make the mark at level 0 before me or another node was added. I need to retry ! *)
+                (* Either another domain make the mark at level 0 before me or 
+                another node was added. I need to retry ! *)
                 remove_min_opt t curr_timestamp prev (Atomic.get prev)
           else
-            (* this node has been added after the linearization point of the current remove_min operation : it is ignored *)
+            (* this node has been added after the linearization point of the 
+            current remove_min operation : it is ignored *)
             remove_min_opt t curr_timestamp next_at_level_0
               (Atomic.get next_at_level_0)
         end
       | Link (Mark marked) -> begin
           Size.update_once t.size marked.decr;
           (* Help remove the marked node *)
-          find_node t r.key |> ignore;
+          find_node ~timestamp:r.timestamp t r.key |> ignore;
           (* Retry *)
           remove_min_opt t curr_timestamp prev (Atomic.get prev)
         end
@@ -426,7 +394,83 @@ and remove_min_opt t curr_timestamp prev = function
 let remove_min_opt (t : ('p, 'v) t) =
   let level0 = Array.unsafe_get t.root 0 in
   let curr_timestamp = Atomic.fetch_and_add t.timestamp 1 in
-  remove_min_opt t curr_timestamp level0 (Atomic.get level0)
+  remove_min_opt t curr_timestamp level0 (Atomic.get level0) *)
+
+(* *)
+
+let rec find_min t timestamp : (_, _, [< `Node | `Null ]) node =
+  let rec find_min_rec prev_at_level0 = function
+    | Link (Mark _) -> find_min t timestamp
+    | Link Null -> Null
+    | Link (Node curr as curr_node) as curr_link -> begin
+        if curr.timestamp > timestamp then
+          (* node is too young *)
+          let next_at_level_0 = Array.unsafe_get curr.next 0 in
+          find_min_rec next_at_level_0 (Atomic.get next_at_level_0)
+        else
+          let next_at_level_0 = Array.unsafe_get curr.next 0 in
+          match Atomic.get next_at_level_0 with
+          | Link (Null | Node _) -> curr_node
+          | Link (Mark next_marked) ->
+              Size.update_once t.size next_marked.decr;
+              let after = Link next_marked.node in
+              if Atomic.compare_and_set prev_at_level0 curr_link after then
+                find_min_rec prev_at_level0 after
+              else find_min_rec prev_at_level0 (Atomic.get prev_at_level0)
+      end
+  in
+  let prev = t.root in
+  let prev_at_level0 = Array.unsafe_get prev 0 in
+  if Atomic.get prev_at_level0 != Link Null then Null
+  else find_min_rec prev_at_level0 (Atomic.get prev_at_level0)
+
+let find_min_debug t =
+  match find_min t (Atomic.get t.timestamp) with
+  | Null -> None
+  | Node r -> Some (r.key, r.value)
+
+let rec try_remove t next level link = function
+  | Link (Mark r) ->
+      if level = 0 then begin
+        Size.update_once t.size r.decr;
+        false
+      end
+      else
+        let level = level - 1 in
+        let link = Array.unsafe_get next level in
+        try_remove t next level link (Atomic.get link)
+  | Link ((Null | Node _) as succ) ->
+      let decr =
+        if level = 0 then Size.new_once t.size Size.decr else Size.used_once
+      in
+      let marked_succ = Mark { node = succ; decr } in
+      if Atomic.compare_and_set link (Link succ) (Link marked_succ) then
+        if level = 0 then
+          (* TODO : use find_node  *)
+          let _node = find_min t in
+          true
+        else
+          let level = level - 1 in
+          let link = Array.unsafe_get next level in
+          try_remove t next level link (Atomic.get link)
+      else try_remove t next level link (Atomic.get link)
+
+let rec remove_min_opt t =
+  let curr_timestamp = Atomic.fetch_and_add t.timestamp 1 in
+  match find_min t curr_timestamp with
+  | Null -> None
+  | Node { next; key; value; _ } ->
+      let level = Array.length next - 1 in
+      let link = Array.unsafe_get next level in
+      if try_remove t next level link (Atomic.get link) then Some (key, value)
+      else remove_min_opt t
+
+(* match find_node t key with
+  | Null -> false
+  | Node { next; _ } ->
+      let level = Array.length next - 1 in
+      let link = Array.unsafe_get next level in
+      try_remove t key next level link (Atomic.get link) *)
 
 (* DEBUG *)
 
@@ -463,7 +507,7 @@ let print_debug sl =
     (fun i s -> Format.printf "Level %d : %s@." (level_max - i - 1) s)
     (List.rev str)
 
-let _test () =
+(* let _test () =
   let pq = create ~max_height:4 ~compare:Int.compare () in
   add pq 1 1;
   add pq 1 2;
@@ -481,18 +525,61 @@ let _test () =
 
 let _test2 () =
   let barrier = Barrier.create 2 in
-  let pq = create ~max_height:4 ~compare:Int.compare () in
+  let pq = create ~max_height:2 ~compare:Int.compare () in
   add pq 1 1;
   add pq 1 2;
-  add pq 1 3;
   print_debug pq;
   print_newline ();
   let work () =
-    Barrier.await ();
+    Barrier.await barrier;
+    remove_min_opt pq |> ignore; Domain.cpu_relax ();
     remove_min_opt pq |> ignore
   in
   let d1 = Domain.spawn work in
   let d2 = Domain.spawn work in
   Domain.join d1;
   Domain.join d2;
-  print_debug pq
+  print_debug pq;
+  print_newline ()
+
+let _test2 () =
+  let barrier = Barrier.create 2 in
+  let pq = create ~max_height:2 ~compare:Int.compare () in
+  add pq 1 1;
+  add pq 1 2;
+  let work () =
+    Barrier.await barrier;
+    remove_min_opt pq |> ignore; Domain.cpu_relax ();
+    remove_min_opt pq |> ignore
+  in
+  let d1 = Domain.spawn work in
+  let d2 = Domain.spawn work in
+  Domain.join d1;
+  Domain.join d2
+
+*)
+(* let _test3 () =
+  let barrier = Barrier.create 2 in
+  let pq = create ~max_height:2 ~compare:Int.compare () in
+
+  add pq 1 1;
+  add pq 1 2;
+
+  let work1 () =
+    Barrier.await barrier;
+    remove_min_opt pq |> ignore;
+    Domain.cpu_relax ();
+    remove_min_opt pq |> ignore
+  in
+
+  let work2 () =
+    Barrier.await barrier;
+    add pq 1 3;
+    Domain.cpu_relax ();
+    add pq 1 4
+  in
+
+  let d1 = Domain.spawn work1 in
+  let d2 = Domain.spawn work2 in
+  Domain.join d1;
+  Domain.join d2 *)
