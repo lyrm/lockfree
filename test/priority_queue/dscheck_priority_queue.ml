@@ -88,7 +88,9 @@ let _two_remove () =
 
       Atomic.spawn (fun () -> removed1 := remove_min_opt pq);
 
-      Atomic.spawn (fun () -> removed2 := remove_min_opt pq);
+      Atomic.spawn (fun () ->
+          removed2 := remove_min_opt pq;
+          remove_min_opt pq |> ignore);
 
       Atomic.final (fun () ->
           Atomic.check (fun () ->
