@@ -84,10 +84,9 @@ let _two_remove () =
       let pq = create ~max_height:2 ~compare:Int.compare () in
       let removed1 = ref None in
       let removed2 = ref None in
+      add pq 1 1;
 
-      Atomic.spawn (fun () ->
-          add pq 1 1;
-          removed1 := remove_min_opt pq);
+      Atomic.spawn (fun () -> removed1 := remove_min_opt pq);
 
       Atomic.spawn (fun () -> removed2 := remove_min_opt pq);
 
@@ -160,8 +159,8 @@ let () =
           test_case "2-mem" `Slow _two_mem;
           test_case "2-add-same" `Slow _two_add_same;
           test_case "2-add" `Slow _two_add;
-          test_case "2-remove-fifo" `Slow _two_remove_fifo;
           test_case "2-remove" `Slow _two_remove;
+          test_case "2-remove-fifo" `Slow _two_remove_fifo;
           test_case "2-remove-add" `Slow _two_remove_add;
           test_case "2-remove-add2" `Slow _two_remove_add2;
         ] );
