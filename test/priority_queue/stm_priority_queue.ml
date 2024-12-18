@@ -3,15 +3,12 @@ open STM
 module Priority_queue = Saturn.Priority_queue
 
 module Spec = struct
-  type cmd =
-    (* Mem of int  *)
-    | Add of int * int
-    | Remove_min
+  type cmd = Find of int | Add of int * int | Remove_min
   (* | Length *)
 
   let show_cmd c =
     match c with
-    (* | Mem i -> "Mem " ^ string_of_int i *)
+    | Find i -> "Find " ^ string_of_int i
     | Add (i, k) -> "Add (" ^ string_of_int i ^ ", " ^ string_of_int k ^ ")"
     | Remove_min -> "Remove_min"
   (* | Length -> "Length" *)
@@ -28,7 +25,7 @@ module Spec = struct
       (Gen.oneof
          [
            Gen.map2 (fun p i -> Add (p, i)) priority_gen val_gen;
-           (* Gen.map (fun p -> Mem p) priority_gen; *)
+           Gen.map (fun p -> Find p) priority_gen;
            Gen.return Remove_min;
            (* Gen.return Length; *)
          ])
@@ -54,8 +51,8 @@ module Spec = struct
             | [] -> assert false
             | [ _ ] -> s
             | _ :: values -> Mint.add p values s))
-  (* | Mem _ -> s
-     | Length -> s *)
+    | Find _ -> s
+  (* | Length -> s *)
 
   let precond _ _ = true
 
@@ -68,8 +65,8 @@ module Spec = struct
             match Priority_queue.remove_min_opt d with
             | None -> []
             | Some (p, v) -> [ p; v ] )
-  (* | Mem i -> Res (bool, Priority_queue.mem d i)
-     | Length -> Res (int, Priority_queue.length d) *)
+    | Find i -> Res (option int, Priority_queue.find_opt d i)
+  (* | Length -> Res (int, Priority_queue.length d) *)
 
   let postcond c (s : state) res =
     match (c, res) with
@@ -81,8 +78,12 @@ module Spec = struct
             match values with [] -> assert false | v :: _ -> res = [ p; v ]
           end
       end
-    (* | Mem i, Res ((Bool, _), res) -> List.mem_assoc i s.queue = res
-       | Length, Res ((Int, _), res) -> List.length s.queue = res *)
+    | Find p, Res ((Option Int, _), res) -> begin
+        match Mint.find_opt p s with
+        | None -> res = None
+        | Some (x :: _) -> res = Some x
+        | _ -> false
+      end
     | _, _ -> false
 end
 

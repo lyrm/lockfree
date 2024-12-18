@@ -131,17 +131,19 @@ and find_path_rec t key prev prev_at_level preds succs level lowest = function
               find_path_rec t key prev prev_at_level preds succs level lowest
                 (Atomic.get prev_at_level)
             else begin
+              (* Updating the found node before returning *)
+              let r_timestamp = Atomic.get r.timestamp in
+              if r_timestamp == `Undefined then begin
+                let after = Atomic.fetch_and_add t.timestamp 1 in
+                Atomic.compare_and_set r.timestamp r_timestamp (`V after)
+                |> ignore
+              end;
               if level = 0 then begin
                 if r.incr != Size.used_once then begin
                   Size.update_once t.size r.incr;
                   r.incr <- Size.used_once
                 end;
-                let r_timestamp = Atomic.get r.timestamp in
-                if r_timestamp == `Undefined then begin
-                  let after = Atomic.fetch_and_add t.timestamp 1 in
-                  Atomic.compare_and_set r.timestamp r_timestamp (`V after)
-                  |> ignore
-                end
+                () (* Return *)
               end
             end
           end
@@ -187,7 +189,6 @@ and find_node_rec t ~timestamp key prev prev_at_level level :
       match Atomic.get next_at_level with
       | Link (Null | Node _) as next ->
           let c = t.compare key r.key in
-
           if 0 < c then
             find_node_rec t ~timestamp key r.next next_at_level level next
           else if 0 < level then
@@ -196,32 +197,25 @@ and find_node_rec t ~timestamp key prev prev_at_level level :
             find_node_rec t ~timestamp key prev prev_at_level level
               (Atomic.get prev_at_level)
           else if c = 0 then begin
-            let r_timestamp =
-              match Atomic.get r.timestamp with
-              | `Undefined -> begin
-                  let v = Atomic.fetch_and_add t.timestamp 1 in
-                  if Atomic.compare_and_set r.timestamp `Undefined (`V v) then v
-                  else
-                    match Atomic.get r.timestamp with
-                    | `V v -> v
-                    | _ -> assert false
+            match Atomic.get r.timestamp with
+            | `Undefined ->
+                find_node_rec t ~timestamp key r.next next_at_level level next
+            | `V r_timestamp ->
+                let go_next_if =
+                  match timestamp with
+                  | None -> false
+                  | Some ts -> ts > r_timestamp
+                in
+
+                if go_next_if then
+                  find_node_rec t ~timestamp key r.next next_at_level level next
+                else begin
+                  if r.incr != Size.used_once then begin
+                    Size.update_once t.size r.incr;
+                    r.incr <- Size.used_once
+                  end;
+                  curr
                 end
-              | `V v -> v
-            in
-
-            let go_next_if =
-              match timestamp with None -> false | Some ts -> ts > r_timestamp
-            in
-
-            if go_next_if then
-              find_node_rec t ~timestamp key r.next next_at_level level next
-            else begin
-              if r.incr != Size.used_once then begin
-                Size.update_once t.size r.incr;
-                r.incr <- Size.used_once
-              end;
-              curr
-            end
           end
           else Null
       | Link (Mark r) ->
@@ -360,39 +354,38 @@ and find_min_rec t timestamp prev_at_level0 = function
   | Link (Mark _) -> find_min t
   | Link Null -> (timestamp, Null)
   | Link (Node r as curr_node) as curr_link -> begin
-      (* Size is not linearizable anymore ?*)
-      if r.incr != Size.used_once then begin
-        Size.update_once t.size r.incr;
-        r.incr <- Size.used_once
-      end;
       let next_at_level_0 = Array.unsafe_get r.next 0 in
       match Atomic.get next_at_level_0 with
-      | Link (Null | Node _) as next ->
-          (* Linearization point *)
-          let r_timestamp, timestamp =
-            match Atomic.get r.timestamp with
-            | `Undefined -> begin
-                let v = Atomic.fetch_and_add t.timestamp 1 in
-                if Atomic.compare_and_set r.timestamp `Undefined (`V v) then
-                  (v, v)
-                else
-                  match Atomic.get r.timestamp with
-                  | `V v -> (v, timestamp)
-                  | _ -> assert false
-              end
-            | `V v -> (v, timestamp)
-          in
-          if r_timestamp = timestamp then find_min t
-          else if r_timestamp > timestamp then
-            (* node is too young *)
-            find_min_rec t timestamp next_at_level_0 next
-          else (timestamp, curr_node)
+      | Link (Null | Node _) as next -> begin
+          match Atomic.get r.timestamp with
+          | `Undefined -> find_min_rec t timestamp next_at_level_0 next
+          | `V r_timestamp when r_timestamp > timestamp ->
+              (* node is too young *)
+              find_min_rec t timestamp next_at_level_0 next
+          | `V _ ->
+              if r.incr != Size.used_once then begin
+                Size.update_once t.size r.incr;
+                r.incr <- Size.used_once
+              end;
+              (timestamp, curr_node)
+        end
       | Link (Mark next_marked) ->
+          (* TODO : avoid the marked node -> require a function that search for the next *)
           Size.update_once t.size next_marked.decr;
           let after = Link next_marked.node in
           if Atomic.compare_and_set prev_at_level0 curr_link after then
             find_min t
           else find_min t
+      (* let rec find_next_unmarked (node : (_, _, [< `Null | `Node ]) node) =
+            match node with
+            | Null -> (timestamp, Null)
+            | Node r ->
+                let next_at_level_0 = Array.unsafe_get r.next 0 in
+                match Atomic.get next_at_level_0 with 
+                |
+                find_min_rec t timestamp (Atomic.get next_at_level_0)
+          in
+          find_next_unmarked next_marked.node *)
     end
 
 let rec try_remove t timestamp next level link = function
