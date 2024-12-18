@@ -3,15 +3,18 @@ open STM
 module Priority_queue = Saturn.Priority_queue
 
 module Spec = struct
-  type cmd = Find of int | Add of int * int | Remove_min
-  (* | Length *)
+  type cmd =
+    | Add of int * int
+    | Remove_min
+    (* | Find of int *)
+    | Length
 
   let show_cmd c =
     match c with
-    | Find i -> "Find " ^ string_of_int i
+    (* | Find i -> "Find " ^ string_of_int i *)
     | Add (i, k) -> "Add (" ^ string_of_int i ^ ", " ^ string_of_int k ^ ")"
     | Remove_min -> "Remove_min"
-  (* | Length -> "Length" *)
+    | Length -> "Length"
 
   module Mint = Map.Make (Int)
 
@@ -25,9 +28,9 @@ module Spec = struct
       (Gen.oneof
          [
            Gen.map2 (fun p i -> Add (p, i)) priority_gen val_gen;
-           Gen.map (fun p -> Find p) priority_gen;
+           (* Gen.map (fun p -> Find p) priority_gen; *)
            Gen.return Remove_min;
-           (* Gen.return Length; *)
+           Gen.return Length;
          ])
 
   let init_state = Mint.empty
@@ -51,8 +54,8 @@ module Spec = struct
             | [] -> assert false
             | [ _ ] -> s
             | _ :: values -> Mint.add p values s))
-    | Find _ -> s
-  (* | Length -> s *)
+    (* | Find _ -> s *)
+    | Length -> s
 
   let precond _ _ = true
 
@@ -65,8 +68,8 @@ module Spec = struct
             match Priority_queue.remove_min_opt d with
             | None -> []
             | Some (p, v) -> [ p; v ] )
-    | Find i -> Res (option int, Priority_queue.find_opt d i)
-  (* | Length -> Res (int, Priority_queue.length d) *)
+        (* | Find i -> Res (option int, Priority_queue.find_opt d i) *)
+    | Length -> Res (int, Priority_queue.length d)
 
   let postcond c (s : state) res =
     match (c, res) with
@@ -78,12 +81,16 @@ module Spec = struct
             match values with [] -> assert false | v :: _ -> res = [ p; v ]
           end
       end
-    | Find p, Res ((Option Int, _), res) -> begin
+    | Length, Res ((Int, _), res) ->
+        Mint.bindings s
+        |> List.fold_left (fun acc (_, l) -> acc + List.length l) 0
+        = res
+    (* | Find p, Res ((Option Int, _), res) -> begin
         match Mint.find_opt p s with
         | None -> res = None
         | Some (x :: _) -> res = Some x
         | _ -> false
-      end
+      end *)
     | _, _ -> false
 end
 

@@ -201,13 +201,11 @@ and find_node_rec t ~timestamp key prev prev_at_level level :
             | `Undefined ->
                 find_node_rec t ~timestamp key r.next next_at_level level next
             | `V r_timestamp ->
-                let go_next_if =
+                if
                   match timestamp with
                   | None -> false
-                  | Some ts -> ts > r_timestamp
-                in
-
-                if go_next_if then
+                  | Some ts -> ts < r_timestamp
+                then
                   find_node_rec t ~timestamp key r.next next_at_level level next
                 else begin
                   if r.incr != Size.used_once then begin
@@ -388,7 +386,7 @@ and find_min_rec t timestamp prev_at_level0 = function
           find_next_unmarked next_marked.node *)
     end
 
-let rec try_remove t timestamp next level link = function
+let rec try_remove t timestamp key next level link = function
   | Link (Mark r) ->
       if level = 0 then begin
         Size.update_once t.size r.decr;
@@ -397,7 +395,7 @@ let rec try_remove t timestamp next level link = function
       else
         let level = level - 1 in
         let link = Array.unsafe_get next level in
-        try_remove t timestamp next level link (Atomic.get link)
+        try_remove t timestamp key next level link (Atomic.get link)
   | Link ((Null | Node _) as succ) ->
       let decr =
         if level = 0 then Size.new_once t.size Size.decr else Size.used_once
@@ -405,13 +403,13 @@ let rec try_remove t timestamp next level link = function
       let marked_succ = Mark { node = succ; decr } in
       if Atomic.compare_and_set link (Link succ) (Link marked_succ) then
         if level = 0 then
-          let _node = find_node ~timestamp t in
+          let _node = find_node ~timestamp t key in
           true
         else
           let level = level - 1 in
           let link = Array.unsafe_get next level in
-          try_remove t timestamp next level link (Atomic.get link)
-      else try_remove t timestamp next level link (Atomic.get link)
+          try_remove t timestamp key next level link (Atomic.get link)
+      else try_remove t timestamp key next level link (Atomic.get link)
 
 let remove_min_opt t =
   let rec loop t =
@@ -420,8 +418,8 @@ let remove_min_opt t =
     | curr_timestamp, Node { next; key; value; _ } ->
         let level = Array.length next - 1 in
         let link = Array.unsafe_get next level in
-        if try_remove t curr_timestamp next level link (Atomic.get link) then
-          Some (key, value)
+        if try_remove t curr_timestamp key next level link (Atomic.get link)
+        then Some (key, value)
         else loop t
   in
   loop t
