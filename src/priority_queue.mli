@@ -1,12 +1,12 @@
-(** A lock-free skiplist. *)
+(** A lock-free priority queue. *)
 
 type (!'k, !'v) t
-(** The type of a lock-free skiplist containing bindings of keys of type ['k] to
-    values of type ['v]. *)
+(** The type of a lock-free priority queue containing bindings of keys of type
+    ['k] to values of type ['v]. *)
 
 val create : ?max_height:int -> compare:('k -> 'k -> int) -> unit -> ('k, 'v) t
-(** [create ~compare ()] creates a new empty skiplist where keys are ordered
-    based on the given [compare] function.
+(** [create ~compare ()] creates a new empty priority queue where keys are
+    ordered based on the given [compare] function.
 
     Note that the polymorphic [Stdlib.compare] function has relatively high
     overhead and it is usually better to use a type specific [compare] function

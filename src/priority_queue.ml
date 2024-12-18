@@ -343,48 +343,58 @@ let length t = Size.get t.size
 (* *)
 
 let rec find_min t : int * (_, _, [< `Node | `Null ]) node =
-  let timestamp = Atomic.fetch_and_add t.timestamp 1 in
+  (* What timestamp ? We need to actually witness a node to define a timestamp. 
+  Why not do   
+    let timestamp = Atomic.fetch_and_add t.timestamp 1 in
+  ?
+  Because in this case we could get :
+
+             add 2 2 
+                 |                         
+      .---------------------.
+      |                     | 
+     TH1                   TH2
+   add 1 1               add 0 0           
+   remove_min 0 0        remove_min 2 2  
+
+  What is happening ? 
+  - Th2 performs its addition
+  - The remove of th2 fetch_and_add and them stop
+  - TH1 performs its 2 operations
+  - TH2 remove operation restart: it is older than the (1, 1) node -> returns (2,2 )
+
+  What if we takes the timestamp of the first unmarked, completely added node :
+  - we have witness a node, if it is remove, find_min restart and redefine its age.
+  *)
   let root = t.root in
   let root_at_level0 = Array.unsafe_get root 0 in
-  find_min_rec t timestamp root_at_level0 (Atomic.get root_at_level0)
-
-and find_min_rec t timestamp prev_at_level0 = function
-  | Link (Mark _) -> find_min t
-  | Link Null -> (timestamp, Null)
-  | Link (Node r as curr_node) as curr_link -> begin
+  match Atomic.get root_at_level0 with
+  | Link (Mark _) -> assert false
+  | Link Null -> (Int.min_int, Null)
+  | Link (Node r) as curr_link -> (
       let next_at_level_0 = Array.unsafe_get r.next 0 in
       match Atomic.get next_at_level_0 with
-      | Link (Null | Node _) as next -> begin
-          match Atomic.get r.timestamp with
-          | `Undefined -> find_min_rec t timestamp next_at_level_0 next
-          | `V r_timestamp when r_timestamp > timestamp ->
-              (* node is too young *)
-              find_min_rec t timestamp next_at_level_0 next
-          | `V _ ->
-              if r.incr != Size.used_once then begin
-                Size.update_once t.size r.incr;
-                r.incr <- Size.used_once
-              end;
-              (timestamp, curr_node)
-        end
-      | Link (Mark next_marked) ->
-          (* TODO : avoid the marked node -> require a function that search for the next *)
-          Size.update_once t.size next_marked.decr;
-          let after = Link next_marked.node in
-          if Atomic.compare_and_set prev_at_level0 curr_link after then
-            find_min t
-          else find_min t
-      (* let rec find_next_unmarked (node : (_, _, [< `Null | `Node ]) node) =
-            match node with
-            | Null -> (timestamp, Null)
-            | Node r ->
-                let next_at_level_0 = Array.unsafe_get r.next 0 in
-                match Atomic.get next_at_level_0 with 
-                |
-                find_min_rec t timestamp (Atomic.get next_at_level_0)
+      | Link (Null | Node _) ->
+          let curr_timestamp =
+            match Atomic.get r.timestamp with
+            | `Undefined -> (
+                let after = Atomic.fetch_and_add t.timestamp 1 in
+                if Atomic.compare_and_set r.timestamp `Undefined (`V after) then
+                  after
+                else
+                  match Atomic.get r.timestamp with
+                  | `V v -> v
+                  | `Undefined -> assert false)
+            | `V v -> v
           in
-          find_next_unmarked next_marked.node *)
-    end
+          (curr_timestamp, Node r)
+      | Link (Mark next_marked) ->
+          Size.update_once t.size next_marked.decr;
+          if
+            Atomic.compare_and_set root_at_level0 curr_link
+              (Link next_marked.node)
+          then find_min t
+          else find_min t)
 
 let rec try_remove t timestamp key next level link = function
   | Link (Mark r) ->
