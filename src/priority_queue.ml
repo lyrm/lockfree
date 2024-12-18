@@ -197,12 +197,10 @@ and find_node_rec t ~timestamp key prev prev_at_level level :
               (Atomic.get prev_at_level)
           else if c = 0 then begin
             let r_timestamp =
-              let old_timestamp = Atomic.get r.timestamp in
-              match old_timestamp with
+              match Atomic.get r.timestamp with
               | `Undefined -> begin
                   let v = Atomic.fetch_and_add t.timestamp 1 in
-                  if Atomic.compare_and_set r.timestamp old_timestamp (`V v)
-                  then v
+                  if Atomic.compare_and_set r.timestamp `Undefined (`V v) then v
                   else
                     match Atomic.get r.timestamp with
                     | `V v -> v
@@ -247,6 +245,7 @@ let create ?(max_height = 10) ~compare () =
   let root = Array.init max_height @@ fun _ -> Atomic.make (Link Null) in
   let size = Size.create () in
   { compare; root; size; timestamp = Atomic.make_contended 0 }
+(* TODO : change 0 ->  min_int *)
 
 let max_height_of t = Array.length t.root
 
@@ -265,9 +264,10 @@ let rec add t key value preds succs =
   find_path t key preds succs 0;
 
   let (Node r as node : (_, _, [ `Node ]) node) =
+    let timestamp = Atomic.make `Undefined in
     let next = Array.map (fun succ -> Atomic.make (Link succ)) succs in
     let incr = Size.new_once t.size Size.incr in
-    Node { key; value; incr; next; timestamp = Atomic.make `Undefined }
+    Node { key; value; incr; next; timestamp }
   in
   if
     let succ = Link (Array.unsafe_get succs 0) in
@@ -277,12 +277,18 @@ let rec add t key value preds succs =
       Size.update_once t.size r.incr;
       r.incr <- Size.used_once
     end;
-
-    (* let r_timestamp = Atomic.get r.timestamp in
-    if r_timestamp == `Undefined then begin
-      let after = Atomic.fetch_and_add t.timestamp 1 in
-      Atomic.compare_and_set r.timestamp r_timestamp (`V after) |> ignore
-    end; *)
+    let r_timestamp =
+      match Atomic.get r.timestamp with
+      | `Undefined -> begin
+          let after = Atomic.fetch_and_add t.timestamp 1 in
+          if Atomic.compare_and_set r.timestamp `Undefined (`V after) then after
+          else
+            match Atomic.get r.timestamp with
+            | `V v -> v
+            | `Undefined -> assert false
+        end
+      | `V v -> v
+    in
 
     (* The node is now considered as added to the skiplist. *)
     let rec update_levels level : unit =
@@ -292,7 +298,7 @@ let rec add t key value preds succs =
              ensure that no references we added to the node remain, we call
              [find_node] which will remove nodes with marked references along
              the way. *)
-          find_path t key preds succs level
+          find_node t ~timestamp:r_timestamp key |> ignore
         end
       end
       else if
@@ -344,30 +350,30 @@ let length t = Size.get t.size
 
 (* *)
 
-let rec find_min t timestamp : int * (_, _, [< `Node | `Null ]) node =
+let rec find_min t : int * (_, _, [< `Node | `Null ]) node =
+  let timestamp = Atomic.fetch_and_add t.timestamp 1 in
   let root = t.root in
   let root_at_level0 = Array.unsafe_get root 0 in
   find_min_rec t timestamp root_at_level0 (Atomic.get root_at_level0)
 
 and find_min_rec t timestamp prev_at_level0 = function
-  | Link (Mark _) -> find_min t timestamp
+  | Link (Mark _) -> find_min t
   | Link Null -> (timestamp, Null)
   | Link (Node r as curr_node) as curr_link -> begin
       (* Size is not linearizable anymore ?*)
-      (* if r.incr != Size.used_once then begin
+      if r.incr != Size.used_once then begin
         Size.update_once t.size r.incr;
         r.incr <- Size.used_once
-      end; *)
+      end;
       let next_at_level_0 = Array.unsafe_get r.next 0 in
       match Atomic.get next_at_level_0 with
       | Link (Null | Node _) as next ->
           (* Linearization point *)
-          let old_timestamp = Atomic.get r.timestamp in
           let r_timestamp, timestamp =
-            match old_timestamp with
+            match Atomic.get r.timestamp with
             | `Undefined -> begin
                 let v = Atomic.fetch_and_add t.timestamp 1 in
-                if Atomic.compare_and_set r.timestamp old_timestamp (`V v) then
+                if Atomic.compare_and_set r.timestamp `Undefined (`V v) then
                   (v, v)
                 else
                   match Atomic.get r.timestamp with
@@ -376,29 +382,23 @@ and find_min_rec t timestamp prev_at_level0 = function
               end
             | `V v -> (v, timestamp)
           in
-
-          if r_timestamp > timestamp then
+          if r_timestamp = timestamp then find_min t
+          else if r_timestamp > timestamp then
             (* node is too young *)
             find_min_rec t timestamp next_at_level_0 next
           else (timestamp, curr_node)
       | Link (Mark next_marked) ->
-          (* Size.update_once t.size next_marked.decr; *)
+          Size.update_once t.size next_marked.decr;
           let after = Link next_marked.node in
           if Atomic.compare_and_set prev_at_level0 curr_link after then
-            find_min_rec t timestamp prev_at_level0 after
-          else
-            find_min_rec t timestamp prev_at_level0 (Atomic.get prev_at_level0)
+            find_min t
+          else find_min t
     end
 
-let find_min_debug t =
-  match find_min t (Atomic.get t.timestamp) with
-  | _, Null -> None
-  | _, Node r -> Some (r.key, r.value)
-
 let rec try_remove t timestamp next level link = function
-  | Link (Mark _r) ->
+  | Link (Mark r) ->
       if level = 0 then begin
-        (* Size.update_once t.size r.decr; *)
+        Size.update_once t.size r.decr;
         false
       end
       else
@@ -412,8 +412,7 @@ let rec try_remove t timestamp next level link = function
       let marked_succ = Mark { node = succ; decr } in
       if Atomic.compare_and_set link (Link succ) (Link marked_succ) then
         if level = 0 then
-          (* TODO : use find_node  *)
-          (* let _node = find_node ~timestamp t in *)
+          let _node = find_node ~timestamp t in
           true
         else
           let level = level - 1 in
@@ -421,16 +420,18 @@ let rec try_remove t timestamp next level link = function
           try_remove t timestamp next level link (Atomic.get link)
       else try_remove t timestamp next level link (Atomic.get link)
 
-let rec remove_min_opt t =
-  let curr_timestamp = Atomic.fetch_and_add t.timestamp 1 in
-  match find_min t curr_timestamp with
-  | _, Null -> None
-  | curr_timestamp, Node { next; key; value; _ } ->
-      let level = Array.length next - 1 in
-      let link = Array.unsafe_get next level in
-      if try_remove t curr_timestamp next level link (Atomic.get link) then
-        Some (key, value)
-      else remove_min_opt t
+let remove_min_opt t =
+  let rec loop t =
+    match find_min t with
+    | _, Null -> None
+    | curr_timestamp, Node { next; key; value; _ } ->
+        let level = Array.length next - 1 in
+        let link = Array.unsafe_get next level in
+        if try_remove t curr_timestamp next level link (Atomic.get link) then
+          Some (key, value)
+        else loop t
+  in
+  loop t
 
 (* DEBUG *)
 
@@ -473,80 +474,3 @@ let print_debug sl =
   List.iteri
     (fun i s -> Format.printf "Level %d : %s@." (level_max - i - 1) s)
     (List.rev str)
-
-(* let _test () =
-  let pq = create ~max_height:4 ~compare:Int.compare () in
-  add pq 1 1;
-  add pq 1 2;
-  add pq 1 3;
-  print_debug pq;
-  print_newline ();
-  assert (Some (1, 1) = remove_min_opt pq);
-  print_debug pq;
-  print_newline ();
-  assert (Some (1, 2) = remove_min_opt pq);
-  print_debug pq;
-  print_newline ();
-  assert (Some (1, 3) = remove_min_opt pq);
-  print_debug pq
-
-let _test2 () =
-  let barrier = Barrier.create 2 in
-  let pq = create ~max_height:2 ~compare:Int.compare () in
-  add pq 1 1;
-  add pq 1 2;
-  print_debug pq;
-  print_newline ();
-  let work () =
-    Barrier.await barrier;
-    remove_min_opt pq |> ignore; Domain.cpu_relax ();
-    remove_min_opt pq |> ignore
-  in
-  let d1 = Domain.spawn work in
-  let d2 = Domain.spawn work in
-  Domain.join d1;
-  Domain.join d2;
-  print_debug pq;
-  print_newline ()
-
-let _test2 () =
-  let barrier = Barrier.create 2 in
-  let pq = create ~max_height:2 ~compare:Int.compare () in
-  add pq 1 1;
-  add pq 1 2;
-  let work () =
-    Barrier.await barrier;
-    remove_min_opt pq |> ignore; Domain.cpu_relax ();
-    remove_min_opt pq |> ignore
-  in
-  let d1 = Domain.spawn work in
-  let d2 = Domain.spawn work in
-  Domain.join d1;
-  Domain.join d2
-
-*)
-(* let _test3 () =
-  let barrier = Barrier.create 2 in
-  let pq = create ~max_height:2 ~compare:Int.compare () in
-
-  add pq 1 1;
-  add pq 1 2;
-
-  let work1 () =
-    Barrier.await barrier;
-    remove_min_opt pq |> ignore;
-    Domain.cpu_relax ();
-    remove_min_opt pq |> ignore
-  in
-
-  let work2 () =
-    Barrier.await barrier;
-    add pq 1 3;
-    Domain.cpu_relax ();
-    add pq 1 4
-  in
-
-  let d1 = Domain.spawn work1 in
-  let d2 = Domain.spawn work2 in
-  Domain.join d1;
-  Domain.join d2 *)
